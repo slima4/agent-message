@@ -1,6 +1,6 @@
 .DS_Store
-mail.jsonl
+messages.jsonl
 .seen-*
-.claude-mail
+.claude-message
 CLAUDE.md
 .claude/
