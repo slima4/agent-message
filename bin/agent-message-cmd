@@ -34,7 +34,7 @@ def thread_of(body, frm):
     if m: return m.group(1).strip(), body[m.end():]
     first = body.splitlines()[0] if body else ""
     slug = re.sub(r"[^a-z0-9]+", "-", first.lower()).strip("-")[:40] or "msg"
-    return f"{time.strftime('%Y-%m-%d')}-{frm}-{slug}", body
+    return f"{time.strftime('%Y-%m-%d', time.gmtime())}-{frm}-{slug}", body
 
 
 def iter_to(d, who):

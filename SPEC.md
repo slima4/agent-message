@@ -55,7 +55,7 @@ canonical = json.dumps({ts, from, to, thread, body},
 id        = sha256(canonical.encode("utf-8")).hexdigest()[:16]
 ```
 
-Concretely: no whitespace between keys/values/items; UTF-8 NFC for body before serialisation; integer `ts`. Pinning the separators is what makes a Python writer and a JS/Go writer produce the same bytes — `JSON.stringify` and `json.dumps` defaults disagree on spacing.
+Concretely: no whitespace between keys/values/items; UTF-8 NFC for body before serialisation; integer `ts`; non-ASCII characters MUST be emitted as raw UTF-8 bytes, never as `\uXXXX` escapes. Pinning the separators is what makes a Python writer and a JS/Go writer produce the same bytes — `JSON.stringify` and `json.dumps` defaults disagree on both spacing and non-ASCII escaping.
 
 Reasoning:
 
@@ -68,21 +68,23 @@ Older records that pre-date `id` (legacy) MAY omit it; readers MUST compute the 
 
 Threads group related messages. Two ways to derive `thread`:
 
-**4.1 Explicit override.** If `body` begins with `[thread:<id>]` (optional surrounding whitespace), the writer:
+**4.1 Explicit override.** If `body` matches `^\s*\[thread:([^\]]+)\]\s*` (the leading whitespace, the bracketed token, and any trailing whitespace), the writer:
 
-- Strips the `[thread:<id>]` prefix from `body`.
-- Sets `thread = <id>`.
+- Strips the entire matched prefix from `body` — what remains is the stored body and the input to `id` (§3).
+- Sets `thread = <id>` (capture group 1, with surrounding whitespace stripped).
 
 **4.2 Auto-derived.** Otherwise, on the first message of a thread:
 
 ```
-date  = strftime("%Y-%m-%d")  // local time
+date  = strftime("%Y-%m-%d", gmtime())  // UTC
 slug  = first line of body, lowercased,
         non-alphanumeric runs collapsed to "-",
         leading/trailing "-" stripped, truncated to 40 chars
         (empty → "msg")
 thread = f"{date}-{from}-{slug}"
 ```
+
+UTC (not local time) so two machines in different time zones syncing the same conversation derive the same thread id.
 
 Including `<from>` in the slug prevents collisions when multiple writers send the same first-line content on the same day.
 
@@ -99,7 +101,7 @@ A participant with alias `<frm>` sending to `<to>`:
 Implementations:
 
 - MUST NOT write to any log file other than their own (`log-<frm>.jsonl`).
-- MUST use append mode (`O_APPEND` semantics). On POSIX, line-sized writes (≤ `PIPE_BUF`, 4 KiB on Linux/macOS) are atomic; longer messages are still safe given the single-writer invariant.
+- MUST use append mode (`O_APPEND` semantics). With the single-writer invariant, no two appends ever race, so writes do not interleave regardless of message size.
 - SHOULD NOT lock — single-writer-per-file makes locking unnecessary.
 
 ## 6. Reading — inbox

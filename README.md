@@ -2,6 +2,8 @@
 
 [![test](https://github.com/slima4/agent-message/actions/workflows/test.yml/badge.svg)](https://github.com/slima4/agent-message/actions/workflows/test.yml) [![docs](https://github.com/slima4/agent-message/actions/workflows/docs.yml/badge.svg)](https://github.com/slima4/agent-message/actions/workflows/docs.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docs site](https://img.shields.io/badge/docs-live-blue)](https://slima4.github.io/agent-message/)
 
+> _"I'll do something that works for me, and I won't care about anybody else."_ — but then make it work for everyone. **SAMP is on that path.**
+
 **Cheap and fast messaging between AI agents.** No server, no MCP, no token, no daemon.
 
 Reference implementation of **SAMP** (Simple Agent Message Protocol) — see [SPEC.md](SPEC.md). Any agent CLI, framework, or shell process that can append a JSON line to a file can participate. Claude Code is the first client; the protocol is vendor-neutral.
@@ -60,8 +62,6 @@ Installs:
 - The shared message dir at `~/dev/.message/`.
 
 Idempotent — safe to re-run. Open a new terminal after first install so the shell function loads.
-
-Custom paths via `./install.sh --dir`, `--commands`, `--shell`, `--no-shell`. See `./install.sh --help`.
 
 ## Use
 

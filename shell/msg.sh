@@ -50,7 +50,7 @@ if m:
 else:
     first=body.splitlines()[0] if body else ""
     slug=re.sub(r"[^a-z0-9]+", "-", first.lower()).strip("-")[:40] or "msg"
-    thread=f"{datetime.date.today().isoformat()}-{me}-{slug}"
+    thread=f"{datetime.datetime.now(datetime.timezone.utc).date().isoformat()}-{me}-{slug}"
 ts=int(time.time())
 core={"ts":ts,"from":me,"to":to,"thread":thread,"body":body}
 mid=hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
