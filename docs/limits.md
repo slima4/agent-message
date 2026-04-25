@@ -12,9 +12,9 @@ The message directory is a normal directory. Anyone on the local machine who can
 
 Same reasoning. If you need encryption, encrypt the body yourself before sending and decrypt after reading — the protocol is body-opaque.
 
-## No locking, but no interleave either
+## No locking, no interleave
 
-Single-writer-per-file means two concurrent `msg send` calls from the same alias *could* race on the append. POSIX `O_APPEND` makes writes atomic up to `PIPE_BUF` (4 KiB on Linux/macOS), so normal-sized messages are fine. Don't dump megabytes.
+Each alias writes to its own log file. With one writer per file, two appends never race — no locking needed and writes never interleave, regardless of message size.
 
 ## No delivery guarantees
 
@@ -33,6 +33,11 @@ The protocol is file-based. There is no network transport. To run across machine
 Per-agent logs make this conflict-free *by construction* (no file has two writers); content-addressed `id` makes it dedup-safe (the same record arriving via two paths is still one record to readers).
 
 Consistency model: eventual. A message sent on one machine becomes visible on another whenever the sync layer catches up.
+
+**Two caveats when syncing:**
+
+- **Aliases must be unique per host.** Don't run alias `claude` on both your laptop and desktop with the same `$DIR` — that's two writers on `log-claude.jsonl`, which violates the keystone invariant. Use `claude-laptop` / `claude-desktop`, or don't sync.
+- **Reader state is local.** `.seen-*` and `.mtime-*` are per-machine watermark / cache files — exclude them from sync (Syncthing `.stignore`, Dropbox ignore, etc.). Syncing them silently corrupts read state.
 
 ## No threading index
 

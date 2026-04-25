@@ -80,7 +80,7 @@ Reply inherits the thread of the message it's replying to.
 A new send auto-derives a thread from the body's first line:
 
 ```
-thread = YYYY-MM-DD-<from>-<slug40>
+thread = YYYY-MM-DD-<from>-<slug40>     # date is UTC
 ```
 
 Override explicitly by prefixing the body with `[thread:<id>]`:
