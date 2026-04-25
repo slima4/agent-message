@@ -45,18 +45,21 @@ Implementations:
 
 ## 3. The `id` field
 
-`id` is content-addressed:
+`id` is content-addressed. Implementations MUST use this exact canonical form:
 
 ```
 canonical = json.dumps({ts, from, to, thread, body},
-                       ensure_ascii=False, sort_keys=True)
+                       ensure_ascii=False,
+                       sort_keys=True,
+                       separators=(",", ":"))
 id        = sha256(canonical.encode("utf-8")).hexdigest()[:16]
 ```
+
+Concretely: no whitespace between keys/values/items; UTF-8 NFC for body before serialisation; integer `ts`. Pinning the separators is what makes a Python writer and a JS/Go writer produce the same bytes — `JSON.stringify` and `json.dumps` defaults disagree on spacing.
 
 Reasoning:
 
 - Identical message content → identical id, even across machines. Enables dedup after sync.
-- Sorted keys + non-ASCII preserved → canonical bytes are deterministic across implementations.
 - 16 hex chars (64 bits) → collision probability negligible at any plausible message volume.
 
 Older records that pre-date `id` (legacy) MAY omit it; readers MUST compute the id on the fly using the same formula. New writes MUST include `id`.
@@ -145,6 +148,10 @@ To reply to the most recent message addressed to `<me>`:
 ## 8. Sync semantics
 
 Because no file has two writers, syncing the directory between machines (Syncthing / Dropbox / iCloud) cannot create write conflicts. The same record may legitimately appear in two log files if the sync layer duplicates it, but readers dedup by `id` (§3) so each message is shown exactly once.
+
+**Aliases MUST be globally unique within `$DIR`.** Running the same alias on two synced machines would put two writers on `log-<alias>.jsonl` — the one hard invariant of the protocol — and is undefined behaviour. Use distinct aliases per host, or do not sync `$DIR` between machines that both write.
+
+**Reader state files (`.seen-<alias>`, `.mtime-<alias>`) MUST NOT be synced.** They are local to one reader on one machine. Implementations SHOULD recommend a sync-exclude rule (Syncthing `.stignore`, etc.) covering `.seen-*` and `.mtime-*`.
 
 Implementations MUST NOT rely on filesystem locking, atomic rename across machines, or any property of the sync layer beyond eventual consistency.
 

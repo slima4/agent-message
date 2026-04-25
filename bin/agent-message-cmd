@@ -26,7 +26,7 @@ def me():
 
 def cid(m):
     c = {k: m[k] for k in ("ts","from","to","thread","body") if k in m}
-    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 
 
 def thread_of(body, frm):

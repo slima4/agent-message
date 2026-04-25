@@ -134,7 +134,7 @@ test_wrapper_id_is_content_addressed() {
 import hashlib, json, sys
 rec = json.loads(open(sys.argv[1]).readline())
 core = {k: rec[k] for k in ("ts","from","to","thread","body")}
-expected = hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+expected = hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 assert rec["id"] == expected, f'id mismatch: {rec["id"]} vs {expected}'
 PY
 }

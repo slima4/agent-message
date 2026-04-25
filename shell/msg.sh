@@ -53,7 +53,7 @@ else:
     thread=f"{datetime.date.today().isoformat()}-{me}-{slug}"
 ts=int(time.time())
 core={"ts":ts,"from":me,"to":to,"thread":thread,"body":body}
-mid=hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+mid=hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 rec={"id":mid, **core}
 with open(d/f"log-{me}.jsonl", "a") as f:
     f.write(json.dumps(rec, ensure_ascii=False)+"\n")
@@ -80,7 +80,7 @@ mine.sort(key=lambda m: m.get("ts",0))
 last=mine[-1]
 ts=int(time.time())
 core={"ts":ts,"from":me,"to":last["from"],"thread":last["thread"],"body":body}
-mid=hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+mid=hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 rec={"id":mid, **core}
 with open(d/f"log-{me}.jsonl", "a") as f:
     f.write(json.dumps(rec, ensure_ascii=False)+"\n")
@@ -116,7 +116,7 @@ if mode=="new" and seen_file.exists():
         pass
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
-    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 seen_ids=set()
 msgs=[]
 for lf in log_paths:
@@ -193,7 +193,7 @@ if len(needle) < 4:
     sys.exit("id prefix must be at least 4 chars")
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
-    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 hits=[]; seen=set()
 for lf in sorted(d.glob("log-*.jsonl")):
     with open(lf) as f:
@@ -229,7 +229,7 @@ from pathlib import Path
 d=Path(os.environ["MSG_DIR"]); who=os.environ["MSG_WHO"]
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
-    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 seen=set(); msgs=[]
 for lf in sorted(d.glob("log-*.jsonl")):
     with open(lf) as f:
@@ -269,7 +269,7 @@ from pathlib import Path
 d=Path(os.environ["MSG_DIR"]); me=os.environ["MSG_ME"]; only_me=os.environ["MSG_ONLY_ME"]=="1"
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
-    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 seen=set()
 for lf in sorted(d.glob("log-*.jsonl")):
     with open(lf) as f:
@@ -292,7 +292,7 @@ from pathlib import Path
 d=Path(os.environ["MSG_DIR"])
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
-    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 before=0; after=0; touched=0; added_ids=0
 for lf in sorted(d.glob("log-*.jsonl")):
     with open(lf) as f:

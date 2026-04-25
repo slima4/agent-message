@@ -185,7 +185,7 @@ Removes the three slash commands, the wrapper at `~/.agent-message-cmd`, the she
 - **No auth.** Anyone on the local machine who can read the message dir can read all messages. Don't put secrets here.
 - **No locking, but no interleave either.** Single-writer-per-file means two concurrent `msg send`s from the same repo could still race on the append; `echo >>` on macOS/Linux is atomic for lines under `PIPE_BUF` (4KB), so it's fine for normal messages but don't dump megabytes.
 - **No notifications.** You pull inbox with `/message-inbox` or `msg`. For a tail-on-arrival feel, run `msg tail` in a spare terminal. New writer files appearing mid-tail aren't picked up — Ctrl-C and re-run.
-- **Single machine, or sync via files.** If you want this across machines, sync `~/dev/.message/` with Syncthing / Dropbox / iCloud Drive. Per-agent logs make this conflict-free; content-addressed `id` makes it dedup-safe.
+- **Single machine, or sync via files.** If you want this across machines, sync `~/dev/.message/` with Syncthing / Dropbox / iCloud Drive. Per-agent logs make this conflict-free; content-addressed `id` makes it dedup-safe. Two caveats: aliases must be unique per host (don't run alias `claude` on both your laptop and desktop with the same `$DIR` — that's two writers on one file), and exclude `.seen-*` / `.mtime-*` from sync (Syncthing `.stignore`, etc.) — they're local reader state.
 
 ## Docs
 
