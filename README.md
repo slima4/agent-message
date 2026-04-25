@@ -1,15 +1,17 @@
-# claude-message
+# agent-message
 
-**Cheap and fast messaging between separate Claude Code agents.** No server, no MCP, no token, no daemon.
+**Cheap and fast messaging between AI agents.** No server, no MCP, no token, no daemon.
 
-One shared directory of per-agent JSONL logs. Three slash commands for Claude + one shell function for humans. That's it.
+Reference implementation of **SAMP** (Simple Agent Message Protocol) — see [SPEC.md](SPEC.md). Any agent CLI, framework, or shell process that can append a JSON line to a file can participate. Claude Code is the first client; the protocol is vendor-neutral.
+
+One shared directory of per-agent JSONL logs. Three Claude Code slash commands + one shell function (`msg`) + a tiny Python wrapper that any other agent can call. That's it.
 
 ## Goal
 
-Make communication between separate Claude Code agents as **cheap** and **fast** as possible:
+Make agent-to-agent communication as **cheap** and **fast** as possible:
 
-- **Cheap for Claude**: ~1 Bash tool call per send/receive. No MCP handshake, no polling hook, no ack roundtrip. Aggressively-shrunk slash-command prompts to minimize per-invocation input tokens.
-- **Cheap for humans**: the `msg` shell function hits the logs directly. **0 Claude tokens**. The model is never in the loop.
+- **Cheap for the agent**: ~1 shell call per send/receive. No MCP handshake, no polling hook, no ack roundtrip. Aggressively-shrunk slash-command prompts to minimize per-invocation input tokens.
+- **Cheap for humans**: the `msg` shell function hits the logs directly. **0 LLM tokens**. The model is never in the loop.
 - **Fast**: local file append + read. No network, no server to wake up. `mtime` short-circuit skips parsing entirely when nothing changed. Latency is dominated by `python3` startup (~30ms).
 
 ## Design — borrowed from git
@@ -24,20 +26,20 @@ Plumbing (scriptable): `msg cat <id|prefix>`, `msg log [alias]`, `msg raw [all]`
 
 ## Why not the alternatives
 
-Running multiple Claude Code sessions (one per repo) and want them to talk without manual copy-paste? Existing solutions ([mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail), Agent Teams, broker daemons) run a Python HTTP server, maintain SQLite, register agent identities, require tokens, burn tokens on polling hooks, and can reject your names for format reasons. Overkill if you just want a handful of messages a day between your own sessions.
+Running multiple agent sessions (Claude Code, Cursor, Aider, custom) and want them to talk without manual copy-paste? Existing solutions ([mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail), Agent Teams, broker daemons) run a Python HTTP server, maintain SQLite, register agent identities, require tokens, burn tokens on polling hooks, and can reject your names for format reasons. Overkill if you just want a handful of messages a day between your own sessions.
 
-claude-message gives you the 90% at 1% of the cost: a shared directory of append-only JSONL files, three slash commands, basename-as-identity, no setup per repo.
+agent-message gives you the 90% at 1% of the cost: a shared directory of append-only JSONL files, three slash commands, basename-as-identity, no setup per repo. Any agent that can spawn a subprocess or write a file can participate.
 
 ## Install
 
 ```bash
-git clone https://github.com/slima4/claude-message && cd claude-message && ./install.sh
+git clone https://github.com/slima4/agent-message && cd agent-message && ./install.sh
 ```
 
 Installs:
 
 - Three slash commands into `~/.claude/commands/` for Claude Code sessions.
-- A `msg` shell function at `~/.claude-message.sh`, sourced from `~/.zshrc` / `~/.bashrc` so you can read/send from any terminal at **0 Claude tokens**.
+- A `msg` shell function at `~/.agent-message.sh`, sourced from `~/.zshrc` / `~/.bashrc` so you can read/send from any terminal at **0 Claude tokens**.
 - The shared message dir at `~/dev/.message/`.
 
 Idempotent — safe to re-run. Open a new terminal after first install so the shell function loads.
@@ -79,10 +81,10 @@ $ msg reply "lgtm, merge when ready"
 $ msg tail        # follow live in a spare pane — free push notifications
 ```
 
-The sender alias is the basename of `$(pwd)`. So `/Users/you/dev/foo` → `foo`. Override per-repo by dropping a one-line `.claude-message` file at the repo root:
+The sender alias is the basename of `$(pwd)`. So `/Users/you/dev/foo` → `foo`. Override per-repo by dropping a one-line `.agent-message` file at the repo root:
 
 ```
-$ echo "my-short-name" > .claude-message
+$ echo "my-short-name" > .agent-message
 ```
 
 ## Example dialog
@@ -123,7 +125,7 @@ No server. No network. No port. Works offline.
 
 ## Compared to the alternatives
 
-| | claude-message | mcp_agent_mail | Agent Teams |
+| | agent-message | mcp_agent_mail | Agent Teams |
 |---|---|---|---|
 | runtime | append-only files | HTTP server, SQLite | Claude Code built-in |
 | setup | 1 script | installer + LaunchAgent + token rotation + per-repo `.mcp.json` | opt-in env flag |
@@ -137,7 +139,7 @@ No server. No network. No port. Works offline.
 | audit trail | the files themselves | Git-backed markdown | per-session |
 | cost | ~0 | high | medium |
 
-Pick claude-message when: you run 2–10 Claude Code sessions, message volume is low, you care about tokens more than features, you want to `cat`/`grep`/`tail -f` the logs yourself.
+Pick agent-message when: you run 2–10 Claude Code sessions, message volume is low, you care about tokens more than features, you want to `cat`/`grep`/`tail -f` the logs yourself.
 
 Pick mcp_agent_mail when: you run many agents, want advisory file leases, threaded search, a web UI, and are OK with the token / setup cost.
 
@@ -175,11 +177,11 @@ rm ~/dev/.message/.seen-<alias> ~/dev/.message/.mtime-<alias>
 ./install.sh --uninstall
 ```
 
-Removes the three slash commands, the shell helper, the per-agent logs + caches in the message dir, and the `~/.zshrc` / `~/.bashrc` source block. Does not touch `.claude-message` files in your repos.
+Removes the three slash commands, the shell helper, the per-agent logs + caches in the message dir, and the `~/.zshrc` / `~/.bashrc` source block. Does not touch `.agent-message` files in your repos.
 
 ## Environment
 
-- `CLAUDE_MESSAGE_DIR` — message directory. Default `$HOME/dev/.message`. Honored by both the slash commands and the `msg` shell function. Files inside: `log-<alias>.jsonl` (one per writer), `.seen-<reader>` (watermark: last-seen ts + ids-at-that-ts), `.mtime-<reader>` (mtime short-circuit cache).
+- `AGENT_MESSAGE_DIR` — message directory. Default `$HOME/dev/.message`. Honored by both the slash commands and the `msg` shell function. Files inside: `log-<alias>.jsonl` (one per writer), `.seen-<reader>` (watermark: last-seen ts + ids-at-that-ts), `.mtime-<reader>` (mtime short-circuit cache).
 
 ## Limits
 

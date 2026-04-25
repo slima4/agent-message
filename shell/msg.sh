@@ -1,6 +1,6 @@
-# claude-message shell helper — 0 Claude tokens, human-side only.
+# agent-message shell helper — 0 Claude tokens, human-side only.
 # Source from ~/.zshrc or ~/.bashrc:
-#   [ -f "$HOME/.claude-message.sh" ] && source "$HOME/.claude-message.sh"
+#   [ -f "$HOME/.agent-message.sh" ] && source "$HOME/.agent-message.sh"
 #
 # Usage:
 #   msg send <to> <body...>    # append to your own per-agent log
@@ -18,16 +18,16 @@
 #
 #   msg help
 #
-# Alias = `basename $PWD`, overridable via `.claude-message` first line at repo root.
-# Message dir = $CLAUDE_MESSAGE_DIR or $HOME/dev/.message/. Each writer owns
+# Alias = `basename $PWD`, overridable via `.agent-message` first line at repo root.
+# Message dir = $AGENT_MESSAGE_DIR or $HOME/dev/.message/. Each writer owns
 # $DIR/log-<alias>.jsonl (single-writer, no interleave). Readers union across
 # log-*.jsonl and dedup by content-addressed id.
 
 msg() {
-  local dir="${CLAUDE_MESSAGE_DIR:-$HOME/dev/.message}"
+  local dir="${AGENT_MESSAGE_DIR:-$HOME/dev/.message}"
   local me=""
-  if [ -s .claude-message ]; then
-    IFS= read -r me < .claude-message || me=""
+  if [ -s .agent-message ]; then
+    IFS= read -r me < .agent-message || me=""
     me=${me%$'\r'}
   fi
   [ -z "$me" ] && me=${PWD##*/}
@@ -329,7 +329,7 @@ PY
       ;;
     help|-h|--help)
       cat <<EOF
-msg — claude-message shell helper
+msg — agent-message shell helper
 
 Porcelain:
   msg                      show unseen (updates watermark)
@@ -347,9 +347,9 @@ Plumbing:
 
   msg help
 
-dir:    \${CLAUDE_MESSAGE_DIR:-\$HOME/dev/.message}
+dir:    \${AGENT_MESSAGE_DIR:-\$HOME/dev/.message}
 files:  \$DIR/log-<alias>.jsonl  (single-writer, union on read)
-alias:  \$(basename \$PWD), override via .claude-message file first line
+alias:  \$(basename \$PWD), override via .agent-message file first line
 EOF
       ;;
     *)

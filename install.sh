@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# claude-message installer
+# agent-message installer
 #
 # Installs three slash commands (/message-send, /message-inbox, /message-reply) for
 # Claude Code, the `msg` shell helper (0-token human path), and creates the
@@ -9,8 +9,8 @@
 # Options:
 #   --dir <path>        Override message dir (default: $HOME/dev/.message)
 #   --commands <dir>    Override Claude commands dir (default: $HOME/.claude/commands)
-#   --shell <path>      Override shell helper install path (default: $HOME/.claude-message.sh)
-#   --bin <path>        Override wrapper install path (default: $HOME/.claude-message-cmd)
+#   --shell <path>      Override shell helper install path (default: $HOME/.agent-message.sh)
+#   --bin <path>        Override wrapper install path (default: $HOME/.agent-message-cmd)
 #   --no-shell          Skip shell helper install
 #   --uninstall         Remove installed commands, wrapper, shell helper, and message dir
 #   -h, --help          Show this help
@@ -21,8 +21,8 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 DIR_DEFAULT="$HOME/dev/.message"
 COMMANDS_DEFAULT="$HOME/.claude/commands"
-SHELL_DEFAULT="$HOME/.claude-message.sh"
-BIN_DEFAULT="$HOME/.claude-message-cmd"
+SHELL_DEFAULT="$HOME/.agent-message.sh"
+BIN_DEFAULT="$HOME/.agent-message-cmd"
 
 MSG_DIR="$DIR_DEFAULT"
 COMMANDS_DIR="$COMMANDS_DEFAULT"
@@ -58,9 +58,9 @@ fi
 
 CMDS=(message-send.md message-inbox.md message-reply.md)
 SHELL_SRC="$SCRIPT_DIR/shell/msg.sh"
-BIN_SRC="$SCRIPT_DIR/bin/claude-message-cmd"
-MARKER_BEGIN="# >>> claude-message >>>"
-MARKER_END="# <<< claude-message <<<"
+BIN_SRC="$SCRIPT_DIR/bin/agent-message-cmd"
+MARKER_BEGIN="# >>> agent-message >>>"
+MARKER_END="# <<< agent-message <<<"
 
 strip_rc_block() {
   local rc="$1"
@@ -71,7 +71,7 @@ p = sys.argv[1]
 with open(p) as f: s = f.read()
 # Replace the matched (including one leading \n) with a single \n to preserve surrounding
 # content separation; then drop that leading \n iff the original file did not start with one.
-s2 = re.sub(r"(?:^|\n)# >>> claude-message >>>.*?# <<< claude-message <<<\n?", "\n", s, flags=re.DOTALL)
+s2 = re.sub(r"(?:^|\n)# >>> agent-message >>>.*?# <<< agent-message <<<\n?", "\n", s, flags=re.DOTALL)
 if s2 != s:
     if not s.startswith("\n"):
         s2 = s2.lstrip("\n")
@@ -106,7 +106,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
     strip_rc_block "$rc"
   done
-  echo "claude-message uninstalled."
+  echo "agent-message uninstalled."
   echo "  removed: ${CMDS[*]/#/$COMMANDS_DIR/}"
   echo "  removed: $MSG_DIR/{log-*.jsonl,.seen-*,.mtime-*} (dir removed if empty)"
   echo "  removed: $BIN_DST"
@@ -153,7 +153,7 @@ if [[ "$INSTALL_SHELL" -eq 1 ]]; then
 fi
 
 cat <<EOF
-claude-message installed.
+agent-message installed.
 
   commands: $COMMANDS_DIR/{message-send,message-inbox,message-reply}.md
   wrapper:  $BIN_DST
@@ -173,7 +173,7 @@ From a terminal (0 Claude tokens):
   msg tail         # follow live
 
 Sender alias defaults to \$(basename "\$PWD"). Override per-repo by putting the
-alias on the first line of a \`.claude-message\` file at the repo root.
+alias on the first line of a \`.agent-message\` file at the repo root.
 
 Permission tip: to skip Claude Code's per-call approval prompt without granting
 blanket python3 access, add to ~/.claude/settings.json:

@@ -7,7 +7,7 @@ allowed-tools: Bash
 `$ARGUMENTS` first word = `<to>`, rest = `<body>`. Run:
 
 ```bash
-~/.claude-message-cmd send <to> <<'BODY'
+~/.agent-message-cmd send <to> <<'BODY'
 <body>
 BODY
 ```

@@ -7,7 +7,7 @@ allowed-tools: Bash
 Body = `$ARGUMENTS`. Run:
 
 ```bash
-~/.claude-message-cmd reply <<'BODY'
+~/.agent-message-cmd reply <<'BODY'
 <body>
 BODY
 ```

@@ -6,7 +6,7 @@ ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def D():
-    return Path(os.environ.get("CLAUDE_MESSAGE_DIR") or str(Path.home()/"dev"/".message"))
+    return Path(os.environ.get("AGENT_MESSAGE_DIR") or str(Path.home()/"dev"/".message"))
 
 
 def _ok(a):
@@ -14,7 +14,7 @@ def _ok(a):
 
 
 def me():
-    p = Path(".claude-message")
+    p = Path(".agent-message")
     if p.is_file():
         try:
             for ln in p.read_text().splitlines():
