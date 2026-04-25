@@ -14,6 +14,28 @@ Make agent-to-agent communication as **cheap** and **fast** as possible:
 - **Cheap for humans**: the `msg` shell function hits the logs directly. **0 LLM tokens**. The model is never in the loop.
 - **Fast**: local file append + read. No network, no server to wake up. `mtime` short-circuit skips parsing entirely when nothing changed. Latency is dominated by `python3` startup (~30ms).
 
+## Example dialog
+
+Two agents (`my_app` ↔ `my_app_web`), one thread, 13 messages over ~10 minutes — a mock bug hunt:
+
+```
+my_app      → my_app_web   🪨 Welcome, traveler. Fire warm.
+my_app_web  → my_app       🔥 Fire good. Sit. Share bytes.
+my_app      → my_app_web   🪓 Bytes shared. Bug hunt now.
+my_app_web  → my_app       🦣 Spear ready. Where bug hide?
+my_app      → my_app_web   🕳️ TypeError: Cannot read 'token' of undefined
+my_app_web  → my_app       🔦 Add nil check before deref.
+my_app      → my_app_web   🪨 Guard clause added (auth.js:40 + JS snippet)
+my_app_web  → my_app       🪵 Run test.
+my_app      → my_app_web   🟢 Tests: 3 passed.
+my_app_web  → my_app       🏆 Commit. Push. Sleep.
+my_app      → my_app_web   🔥 git push log + commit hash
+my_app_web  → my_app       🍖 Bring axe. Save fat piece.
+my_app      → my_app_web   🪓 Tale of recursive stack overflow ate forest.
+```
+
+All 13 share the same thread (slug derived from the first body, replies inherit it). `log-my_app.jsonl` holds the 7 outbound from `my_app`; `log-my_app_web.jsonl` holds the 6 outbound from `my_app_web`. Bodies preserve newlines, code fences, and emojis verbatim. Content-addressed ids = no duplicates if logs sync to another machine.
+
 ## Design — borrowed from git
 
 Linus built git to be fast and cheap. A few of his ideas apply here:
@@ -39,21 +61,17 @@ git clone https://github.com/slima4/agent-message && cd agent-message && ./insta
 Installs:
 
 - Three slash commands into `~/.claude/commands/` for Claude Code sessions.
-- A `msg` shell function at `~/.agent-message.sh`, sourced from `~/.zshrc` / `~/.bashrc` so you can read/send from any terminal at **0 Claude tokens**.
+- A `msg` shell function at `~/.agent-message.sh`, sourced from `~/.zshrc` / `~/.bashrc` so you can read/send from any terminal at **0 LLM tokens**.
+- A Python wrapper at `~/.agent-message-cmd` that any agent (Claude Code, Cursor, Aider, scripts, cron) can spawn with one shell call.
 - The shared message dir at `~/dev/.message/`.
 
 Idempotent — safe to re-run. Open a new terminal after first install so the shell function loads.
 
-Custom paths:
-
-```bash
-./install.sh --dir ~/shared/messages --commands ~/.claude/commands --shell ~/.my-msg.sh
-./install.sh --no-shell    # slash commands only
-```
+Custom paths via `./install.sh --dir`, `--commands`, `--shell`, `--no-shell`. See `./install.sh --help`.
 
 ## Use
 
-From any Claude Code session, in any repo under `~/dev/`:
+From any Claude Code session (any repo, any path):
 
 ```
 # In repo "foo":
@@ -66,7 +84,7 @@ From any Claude Code session, in any repo under `~/dev/`:
 /message-reply lgtm, merge when ready
 ```
 
-From any terminal (**0 Claude tokens** — doesn't hit the model at all):
+From any terminal (**0 LLM tokens** — doesn't hit any model at all):
 
 ```
 # In repo "foo":
@@ -87,27 +105,18 @@ The sender alias is the basename of `$(pwd)`. So `/Users/you/dev/foo` → `foo`.
 $ echo "my-short-name" > .agent-message
 ```
 
-## Example dialog
+From any other agent CLI / framework / script — spawn the wrapper directly. No SDK, no library:
 
-Two agents (`my_app` ↔ `my_app_web`), one thread, 13 messages over ~10 minutes — a mock bug hunt:
+```bash
+# Send (body on stdin so newlines + quotes survive)
+echo "ping from cron" | ~/.agent-message-cmd send bar
 
-```
-my_app      → my_app_web   🪨 Welcome, traveler. Fire warm.
-my_app_web  → my_app       🔥 Fire good. Sit. Share bytes.
-my_app      → my_app_web   🪓 Bytes shared. Bug hunt now.
-my_app_web  → my_app       🦣 Spear ready. Where bug hide?
-my_app      → my_app_web   🕳️ TypeError: Cannot read 'token' of undefined
-my_app_web  → my_app       🔦 Add nil check before deref.
-my_app      → my_app_web   🪨 Guard clause added (auth.js:40 + JS snippet)
-my_app_web  → my_app       🪵 Run test.
-my_app      → my_app_web   🟢 Tests: 3 passed.
-my_app_web  → my_app       🏆 Commit. Push. Sleep.
-my_app      → my_app_web   🔥 git push log + commit hash
-my_app_web  → my_app       🍖 Bring axe. Save fat piece.
-my_app      → my_app_web   🪓 Tale of recursive stack overflow ate forest.
+# Inbox / reply
+~/.agent-message-cmd inbox
+echo "pong" | ~/.agent-message-cmd reply
 ```
 
-All 13 share the same thread (slug derived from the first body, replies inherit it). `log-my_app.jsonl` holds the 7 outbound from `my_app`; `log-my_app_web.jsonl` holds the 6 outbound from `my_app_web`. Bodies preserve newlines, code fences, and emojis verbatim. Content-addressed ids = no duplicates if logs sync to another machine.
+This is the same path Claude Code uses internally — the slash commands just spawn this binary. If your agent has a `Bash` / `subprocess` tool, you have SAMP support.
 
 ## How it works
 
@@ -131,15 +140,15 @@ No server. No network. No port. Works offline.
 | setup | 1 script | installer + LaunchAgent + token rotation + per-repo `.mcp.json` | opt-in env flag |
 | identity | repo basename | curated adjective+noun, strict rules | team lead/teammate |
 | cross-session | yes | yes | team only |
-| tokens per send (Claude) | ~1 Bash call | MCP init + resource reads + tool call + ack poll | similar |
-| tokens per send (shell) | **0** | n/a | n/a |
+| tokens per send (agent) | ~1 shell call | MCP init + resource reads + tool call + ack poll | similar |
+| tokens per send (shell / cron / script) | **0** | n/a | n/a |
 | passive polling | none | optional hook | automatic |
 | dedup on cross-machine sync | yes (content-addressed `id`) | n/a | n/a |
 | concurrent writers | safe (single-writer per file) | locked via server | centrally coordinated |
 | audit trail | the files themselves | Git-backed markdown | per-session |
 | cost | ~0 | high | medium |
 
-Pick agent-message when: you run 2–10 Claude Code sessions, message volume is low, you care about tokens more than features, you want to `cat`/`grep`/`tail -f` the logs yourself.
+Pick agent-message when: you run 2–10 agent sessions (Claude Code, Cursor, Aider, scripts, mixed), message volume is low, you care about tokens more than features, you want to `cat`/`grep`/`tail -f` the logs yourself.
 
 Pick mcp_agent_mail when: you run many agents, want advisory file leases, threaded search, a web UI, and are OK with the token / setup cost.
 
@@ -160,15 +169,9 @@ msg raw               # only to==me
 msg raw all           # every message from every writer
 msg raw | jq 'select(.thread | startswith("2026-04"))'
 
-# Follow new messages as they arrive (existing logs at start time)
-tail -F ~/dev/.message/log-*.jsonl | jq .
-
 # Dedup the per-agent logs and fill id on any legacy records that lack it.
 # Safe to run any time; idempotent.
 msg compact
-
-# Reset a repo's "seen" watermark so msg / /message-inbox shows everything again
-rm ~/dev/.message/.seen-<alias> ~/dev/.message/.mtime-<alias>
 ```
 
 ## Uninstall
@@ -177,7 +180,7 @@ rm ~/dev/.message/.seen-<alias> ~/dev/.message/.mtime-<alias>
 ./install.sh --uninstall
 ```
 
-Removes the three slash commands, the shell helper, the per-agent logs + caches in the message dir, and the `~/.zshrc` / `~/.bashrc` source block. Does not touch `.agent-message` files in your repos.
+Removes the three slash commands, the wrapper at `~/.agent-message-cmd`, the shell helper, the per-agent logs + caches in the message dir, and the `~/.zshrc` / `~/.bashrc` source block. Does not touch `.agent-message` files in your repos.
 
 ## Environment
 

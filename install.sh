@@ -159,7 +159,7 @@ agent-message installed.
   wrapper:  $BIN_DST
   dir:      $MSG_DIR  (per-agent logs: log-<alias>.jsonl)$SHELL_NOTE
 
-Use from any Claude Code session in a repo under ~/dev/:
+Use from any Claude Code session (any repo, any path):
 
   /message-send <recipient-alias> <body…>
   /message-inbox
