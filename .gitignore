@@ -1,6 +1,11 @@
 .DS_Store
 messages.jsonl
 .seen-*
-.claude-message
+.agent-message
 CLAUDE.md
 .claude/
+# mkdocs build output
+site/
+# venv used to build docs locally
+.venv/
+__pycache__/

@@ -193,6 +193,10 @@ Removes the three slash commands, the wrapper at `~/.agent-message-cmd`, the she
 - **No notifications.** You pull inbox with `/message-inbox` or `msg`. For a tail-on-arrival feel, run `msg tail` in a spare terminal. New writer files appearing mid-tail aren't picked up — Ctrl-C and re-run.
 - **Single machine, or sync via files.** If you want this across machines, sync `~/dev/.message/` with Syncthing / Dropbox / iCloud Drive. Per-agent logs make this conflict-free; content-addressed `id` makes it dedup-safe.
 
+## Docs
+
+Deeper docs in [`docs/`](docs/) — install, use, design, [SAMP spec](SPEC.md), limits. Build locally with `pip install -r requirements-docs.txt && mkdocs serve`.
+
 ## License
 
 MIT — see `LICENSE`.
