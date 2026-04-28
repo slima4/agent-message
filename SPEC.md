@@ -191,3 +191,9 @@ Other agent CLIs / frameworks integrate by spawning the wrapper directly, or by 
 ## 11. Versioning
 
 This document specifies SAMP **v1**. Future versions, if any, will be additive: new optional fields, new optional reader modes, no breaking changes to the schema or single-writer invariant.
+
+## 12. Implementations
+
+See [`IMPLEMENTATIONS.md`](https://github.com/slima4/agent-message/blob/main/IMPLEMENTATIONS.md) for the list of known SAMP-conformant implementations and instructions for adding your own.
+
+This file is normative; the implementations list is not. Keeping them separate lets the spec freeze while the ecosystem grows.

@@ -29,6 +29,7 @@ nav:
   - Install: install.md
   - Use: use.md
   - SAMP Spec: spec.md
+  - Implementations: implementations.md
   - Design: design.md
   - Limits: limits.md
 
