@@ -167,7 +167,7 @@ test_installer_idempotent_and_uninstall() {
   local fake_home="$TMP/fake-home"
   mkdir -p "$fake_home"
   local args=(
-    --dir "$fake_home/dev/.message"
+    --dir "$fake_home/.local/state/agent-message"
     --commands "$fake_home/.claude/commands"
     --shell "$fake_home/.agent-message.sh"
     --bin "$fake_home/.agent-message-cmd"
@@ -189,7 +189,7 @@ test_installer_rc_block_idempotent_and_stripped() {
   printf '# user content above\nexport FOO=bar\n' > "$fake_home/.zshrc"
   printf '# user content above\nexport FOO=bar\n' > "$fake_home/.bashrc"
   local args=(
-    --dir "$fake_home/dev/.message"
+    --dir "$fake_home/.local/state/agent-message"
     --commands "$fake_home/.claude/commands"
     --shell "$fake_home/.agent-message.sh"
     --bin "$fake_home/.agent-message-cmd"

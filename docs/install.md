@@ -15,13 +15,13 @@ Idempotent — safe to re-run. Open a new terminal after first install so the sh
 | `~/.claude/commands/message-{send,inbox,reply}.md` | Claude Code slash-command prompts |
 | `~/.agent-message-cmd` | Python wrapper — single entry point used by the slash commands and any other agent |
 | `~/.agent-message.sh` | `msg` shell function, sourced from `~/.zshrc` and `~/.bashrc` via an idempotent `# >>> agent-message >>>` block |
-| `~/dev/.message/` | Default shared message directory (`AGENT_MESSAGE_DIR` overrides) |
+| `${XDG_STATE_HOME:-~/.local/state}/agent-message/` | Default shared message directory (`AGENT_MESSAGE_DIR` overrides) |
 
 ## Flags
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--dir <path>` | `~/dev/.message` | Override message dir |
+| `--dir <path>` | `${XDG_STATE_HOME:-~/.local/state}/agent-message` | Override message dir |
 | `--commands <path>` | `~/.claude/commands` | Override Claude commands dir |
 | `--shell <path>` | `~/.agent-message.sh` | Override shell helper install path |
 | `--bin <path>` | `~/.agent-message-cmd` | Override wrapper install path |

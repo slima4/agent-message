@@ -20,12 +20,12 @@
 #   msg help
 #
 # Alias = `basename $PWD`, overridable via `.agent-message` first line at repo root.
-# Message dir = $AGENT_MESSAGE_DIR or $HOME/dev/.message/. Each writer owns
+# Message dir = $AGENT_MESSAGE_DIR or ${XDG_STATE_HOME:-$HOME/.local/state}/agent-message/. Each writer owns
 # $DIR/log-<alias>.jsonl (single-writer, no interleave). Readers union across
 # log-*.jsonl and dedup by content-addressed id.
 
 msg() {
-  local dir="${AGENT_MESSAGE_DIR:-$HOME/dev/.message}"
+  local dir="${AGENT_MESSAGE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agent-message}"
   local me=""
   if [ -s .agent-message ]; then
     IFS= read -r me < .agent-message || me=""
@@ -349,7 +349,7 @@ Plumbing:
 
   msg help
 
-dir:    \${AGENT_MESSAGE_DIR:-\$HOME/dev/.message}
+dir:    \${AGENT_MESSAGE_DIR:-\${XDG_STATE_HOME:-\$HOME/.local/state}/agent-message}
 files:  \$DIR/log-<alias>.jsonl  (single-writer, union on read)
 alias:  \$(basename \$PWD), override via .agent-message file first line
 EOF

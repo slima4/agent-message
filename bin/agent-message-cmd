@@ -6,7 +6,10 @@ ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def D():
-    return Path(os.environ.get("AGENT_MESSAGE_DIR") or str(Path.home()/"dev"/".message"))
+    if env := os.environ.get("AGENT_MESSAGE_DIR"):
+        return Path(env)
+    state = os.environ.get("XDG_STATE_HOME") or str(Path.home()/".local"/"state")
+    return Path(state)/"agent-message"
 
 
 def _ok(a):

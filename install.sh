@@ -7,7 +7,7 @@
 # shared message dir. Idempotent: safe to re-run.
 #
 # Options:
-#   --dir <path>        Override message dir (default: $HOME/dev/.message)
+#   --dir <path>        Override message dir (default: ${XDG_STATE_HOME:-$HOME/.local/state}/agent-message)
 #   --commands <dir>    Override Claude commands dir (default: $HOME/.claude/commands)
 #   --shell <path>      Override shell helper install path (default: $HOME/.agent-message.sh)
 #   --bin <path>        Override wrapper install path (default: $HOME/.agent-message-cmd)
@@ -19,7 +19,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-DIR_DEFAULT="$HOME/dev/.message"
+DIR_DEFAULT="${XDG_STATE_HOME:-$HOME/.local/state}/agent-message"
 COMMANDS_DEFAULT="$HOME/.claude/commands"
 SHELL_DEFAULT="$HOME/.agent-message.sh"
 BIN_DEFAULT="$HOME/.agent-message-cmd"

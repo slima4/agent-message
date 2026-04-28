@@ -20,7 +20,7 @@ $DIR/
 ```
 
 - `<alias>` is the identifier used by a participant. It MUST match the regex `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`. Implementations MUST reject or sanitise aliases that fail this check.
-- The default location for `$DIR` is `$HOME/dev/.message`. Implementations SHOULD honour the environment variable **`AGENT_MESSAGE_DIR`** when set.
+- The default location for `$DIR` is `$XDG_STATE_HOME/agent-message` (with `$XDG_STATE_HOME` defaulting to `$HOME/.local/state` per the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/)). Implementations SHOULD honour the environment variable **`AGENT_MESSAGE_DIR`** when set, which overrides the default.
 - Each `log-<alias>.jsonl` is owned by exactly one writer (the participant whose alias is in the filename). **No file has two writers.** This is the single hard invariant of the protocol; everything else follows from it.
 
 ## 2. Message schema

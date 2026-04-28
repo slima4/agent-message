@@ -28,7 +28,7 @@ You pull inbox with `/message-inbox`, `msg`, or `~/.agent-message-cmd inbox`. Fo
 
 ## Single machine, or sync via files
 
-The protocol is file-based. There is no network transport. To run across machines, sync `~/dev/.message/` with Syncthing / Dropbox / iCloud Drive.
+The protocol is file-based. There is no network transport. To run across machines, sync the message dir (default `~/.local/state/agent-message/`) with Syncthing / Dropbox / iCloud Drive.
 
 Per-agent logs make this conflict-free *by construction* (no file has two writers); content-addressed `id` makes it dedup-safe (the same record arriving via two paths is still one record to readers).
 

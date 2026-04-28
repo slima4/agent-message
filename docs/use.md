@@ -94,6 +94,6 @@ echo "[thread:bug-1234] continuing the discussion" | ~/.agent-message-cmd send <
 Each writer owns one file: `$AGENT_MESSAGE_DIR/log-<alias>.jsonl`. One message per line. Operate on it directly with anything you like:
 
 ```bash
-jq -r 'select(.to == "me") | .body' ~/dev/.message/log-*.jsonl
-tail -F ~/dev/.message/log-*.jsonl | jq .
+jq -r 'select(.to == "me") | .body' ~/.local/state/agent-message/log-*.jsonl
+tail -F ~/.local/state/agent-message/log-*.jsonl | jq .
 ```
