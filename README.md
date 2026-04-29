@@ -2,11 +2,13 @@
 
 [![test](https://github.com/slima4/agent-message/actions/workflows/test.yml/badge.svg)](https://github.com/slima4/agent-message/actions/workflows/test.yml) [![docs](https://github.com/slima4/agent-message/actions/workflows/docs.yml/badge.svg)](https://github.com/slima4/agent-message/actions/workflows/docs.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docs site](https://img.shields.io/badge/docs-live-blue)](https://slima4.github.io/agent-message/)
 
-> _"I'll do something that works for me, and I won't care about anybody else."_ — but then make it work for everyone. **SAMP is on that path.**
+**Cheap, fast messaging between AI agents.** File-based — no server, no MCP, no daemon. Reference impl of [SAMP](SPEC.md) ([implementations](IMPLEMENTATIONS.md)).
 
-**Cheap and fast messaging between AI agents.** No server, no MCP, no token, no daemon.
+- **Why:** ~1 shell call per send (low Claude tokens). **0 LLM tokens** from terminal — `msg` never touches a model. Per-writer logs sync conflict-free across machines.
+- **Install:** `git clone https://github.com/slima4/agent-message && cd agent-message && ./install.sh`
+- **Demo:** sender runs `msg send bar "ping"`; recipient (in `bar/`) runs `msg`; message appears. Done.
 
-Reference implementation of **SAMP** (Simple Agent Message Protocol) — see [SPEC.md](SPEC.md). Any agent CLI, framework, or shell process that can append a JSON line to a file can participate. Claude Code is the first client; the protocol is vendor-neutral.
+Any agent CLI, framework, or shell process that can append a JSON line to a file can participate. Claude Code is the first client; the protocol is vendor-neutral.
 
 ## Goal
 
@@ -39,6 +41,8 @@ my_app      → my_app_web   🪓 Tale of recursive stack overflow ate forest.
 All 13 share the same thread (slug derived from the first body, replies inherit it). `log-my_app.jsonl` holds the 7 outbound from `my_app`; `log-my_app_web.jsonl` holds the 6 outbound from `my_app_web`. Bodies preserve newlines, code fences, and emojis verbatim. Content-addressed ids = no duplicates if logs sync to another machine.
 
 ## Design — borrowed from git
+
+> _"I'll do something that works for me, and I won't care about anybody else."_ — Linus. SAMP is on that path.
 
 Linus built git to be fast and cheap. A few of his ideas apply here:
 
@@ -148,24 +152,13 @@ Pick mcp_agent_mail when: you run many agents, want advisory file leases, thread
 
 ## Browse and script
 
-The `msg` function has a few plumbing subcommands for scripts and spelunking:
+Plumbing for scripts and spelunking:
 
 ```bash
-# Pretty-print a specific message by id (first 4+ chars is enough)
-msg cat ab12cd34
-
-# git-log-style dump of everything involving the current repo (or a named alias)
-msg log
-msg log bar
-
-# JSONL dump for piping into jq (default: messages addressed to you)
-msg raw               # only to==me
-msg raw all           # every message from every writer
-msg raw | jq 'select(.thread | startswith("2026-04"))'
-
-# Dedup the per-agent logs and fill id on any legacy records that lack it.
-# Safe to run any time; idempotent.
-msg compact
+msg cat ab12cd34            # pretty-print one record by id (4+ char prefix)
+msg log [alias]             # git-log style — messages involving me / alias
+msg raw [all] | jq …        # JSONL dump for piping
+msg compact                 # idempotent dedup + id backfill
 ```
 
 ## Uninstall
