@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E401, E701, E702
 """SAMP v1 conformance validator.
 
 Walks a SAMP message store and asserts §9 conformance:
@@ -17,6 +18,7 @@ Default path: $AGENT_MESSAGE_DIR or ${XDG_STATE_HOME:-$HOME/.local/state}/agent-
 
 Exit code: 0 on conformance, 1 on violations, 2 on usage error.
 """
+from __future__ import annotations
 
 import hashlib, json, os, re, sys
 from pathlib import Path
@@ -29,21 +31,21 @@ ID_RE = re.compile(r"^[0-9a-f]{16}$")
 REQUIRED = ("id", "ts", "from", "to", "thread", "body")
 
 
-def default_dir():
+def default_dir() -> Path:
     if env := os.environ.get("AGENT_MESSAGE_DIR"):
         return Path(env)
     state = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
     return Path(state) / "agent-message"
 
 
-def cid(rec):
+def cid(rec: dict) -> str:
     c = {k: rec[k] for k in ("ts", "from", "to", "thread", "body") if k in rec}
     return hashlib.sha256(
         json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()[:16]
 
 
-def validate_record(rec, file_alias, lf, line_no, violations):
+def validate_record(rec: dict, file_alias: str, lf: Path, line_no: int, violations: list[str]) -> None:
     here = f"{lf.name}:{line_no}"
     for k in REQUIRED:
         if k not in rec:
@@ -81,7 +83,7 @@ def validate_record(rec, file_alias, lf, line_no, violations):
         )
 
 
-def main():
+def main() -> int:
     if len(sys.argv) >= 2 and sys.argv[1] in ("--version", "-V"):
         print(f"samp-validate {__version__} (SAMP v1)")
         return 0

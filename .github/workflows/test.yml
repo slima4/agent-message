@@ -23,6 +23,13 @@ jobs:
       - uses: actions/checkout@v6
       - run: shellcheck -S warning install.sh shell/msg.sh test.sh
 
+  lint-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: pipx run ruff check bin/agent-message-cmd samp-validate
+      - run: pipx run pyright bin/agent-message-cmd samp-validate
+
   test:
     strategy:
       fail-fast: false

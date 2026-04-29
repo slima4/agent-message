@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# ruff: noqa: E401, E701, E702
+from __future__ import annotations
+
 import hashlib, json, os, re, sys, time
 from pathlib import Path
 
@@ -7,18 +10,18 @@ __version__ = "1.0.0"
 ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
-def D():
+def D() -> Path:
     if env := os.environ.get("AGENT_MESSAGE_DIR"):
         return Path(env)
     state = os.environ.get("XDG_STATE_HOME") or str(Path.home()/".local"/"state")
     return Path(state)/"agent-message"
 
 
-def _ok(a):
+def _ok(a: str | None) -> str | None:
     return a if a and ALIAS_RE.match(a) else None
 
 
-def me():
+def me() -> str:
     p = Path(".agent-message")
     if p.is_file():
         try:
@@ -29,12 +32,12 @@ def me():
     return _ok(Path.cwd().name) or "unknown"
 
 
-def cid(m):
+def cid(m: dict) -> str:
     c = {k: m[k] for k in ("ts","from","to","thread","body") if k in m}
     return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 
 
-def thread_of(body, frm):
+def thread_of(body: str, frm: str) -> tuple[str, str]:
     m = re.match(r"\s*\[thread:([^\]]+)\]\s*", body)
     if m: return m.group(1).strip(), body[m.end():]
     first = body.splitlines()[0] if body else ""
@@ -42,7 +45,7 @@ def thread_of(body, frm):
     return f"{time.strftime('%Y-%m-%d', time.gmtime())}-{frm}-{slug}", body
 
 
-def iter_to(d, who):
+def iter_to(d: Path, who: str):
     seen = set()
     for lf in sorted(d.glob("log-*.jsonl")):
         with open(lf) as f:
@@ -58,7 +61,7 @@ def iter_to(d, who):
                 yield i, m
 
 
-def write(d, frm, to, thread, body):
+def write(d: Path, frm: str, to: str, thread: str, body: str) -> dict:
     rec = {"ts": int(time.time()), "from": frm, "to": to, "thread": thread, "body": body}
     rec = {"id": cid(rec), **rec}
     d.mkdir(parents=True, exist_ok=True)
@@ -67,7 +70,7 @@ def write(d, frm, to, thread, body):
     return rec
 
 
-def send(args):
+def send(args: list[str]) -> None:
     if not args: sys.exit("usage: send <to>")
     if sys.stdin.isatty():
         sys.exit("send: pipe body via stdin, e.g. echo 'hi' | agent-message-cmd send <to>")
@@ -79,7 +82,7 @@ def send(args):
     print(f"sent {frm}→{to} thread={thread} id={rec['id']}")
 
 
-def reply(args):
+def reply(args: list[str]) -> None:
     who = me()
     if sys.stdin.isatty():
         sys.exit("reply: pipe body via stdin, e.g. echo 'lgtm' | agent-message-cmd reply")
@@ -93,7 +96,7 @@ def reply(args):
     print(f"reply {who}→{last['from']} thread={last['thread']} id={rec['id']}")
 
 
-def inbox(args):
+def inbox(args: list[str]) -> None:
     mode = args[0] if args else "default"
     if mode not in ("default", "all", "raw"): sys.exit(f"unknown mode: {mode}")
     who = me(); d = D()
