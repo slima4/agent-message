@@ -59,6 +59,17 @@ Installs:
 
 Idempotent — safe to re-run. Open a new terminal after first install so the shell function loads.
 
+Optional one-line integrations for other agents:
+
+```bash
+./install.sh --integrate=cursor      # ~/.cursor/rules/agent-message.mdc
+./install.sh --integrate=copilot     # .github/copilot-instructions.md (cwd repo)
+./install.sh --integrate=all         # cursor + copilot
+./install.sh --integrate=auto        # detect installed tools and integrate
+```
+
+See [`docs/integrations/`](docs/integrations/index.md) for per-tool guides (Cursor, Copilot, opencode, Continue, Aider).
+
 ## Use
 
 From any Claude Code session (any repo, any path):

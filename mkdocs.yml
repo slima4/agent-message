@@ -28,6 +28,13 @@ nav:
   - Home: index.md
   - Install: install.md
   - Use: use.md
+  - Integrations:
+    - Overview: integrations/index.md
+    - Cursor: integrations/cursor.md
+    - GitHub Copilot: integrations/copilot.md
+    - opencode: integrations/opencode.md
+    - Continue.dev: integrations/continue.md
+    - Aider: integrations/aider.md
   - SAMP Spec: spec.md
   - Implementations: implementations.md
   - Design: design.md

@@ -12,7 +12,11 @@
 #   --shell <path>      Override shell helper install path (default: $HOME/.agent-message.sh)
 #   --bin <path>        Override wrapper install path (default: $HOME/.agent-message-cmd)
 #   --no-shell          Skip shell helper install
-#   --uninstall         Remove installed commands, wrapper, shell helper, and message dir
+#   --integrate=<list>  Wire up other agents. Tools: cursor, copilot, all, auto.
+#                       Comma-separated. With --uninstall, strips only listed tools.
+#                       Without --uninstall, integrates them on top of main install.
+#   --uninstall         Remove installed commands, wrapper, shell helper, message dir,
+#                       and all known integrations (or only --integrate=<list> if set).
 #   -h, --help          Show this help
 
 set -euo pipefail
@@ -30,6 +34,7 @@ SHELL_DST="$SHELL_DEFAULT"
 BIN_DST="$BIN_DEFAULT"
 INSTALL_SHELL=1
 UNINSTALL=0
+INTEGRATE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,9 +47,11 @@ while [[ $# -gt 0 ]]; do
     --bin) shift; BIN_DST="${1:?}";;
     --bin=*) BIN_DST="${1#*=}";;
     --no-shell) INSTALL_SHELL=0;;
+    --integrate) shift; INTEGRATE="${1:?}";;
+    --integrate=*) INTEGRATE="${1#*=}";;
     --uninstall) UNINSTALL=1;;
     -h|--help)
-      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *) echo "unknown option: $1" >&2; exit 2;;
   esac
@@ -92,7 +99,135 @@ inject_rc_block() {
   } >> "$rc"
 }
 
+expand_integrations() {
+  case "$1" in
+    "") return 0;;
+    all) echo "cursor copilot";;
+    auto)
+      local out=""
+      [[ -d "$HOME/.cursor" ]] && out="$out cursor"
+      [[ -d ".git" ]] && out="$out copilot"
+      echo "$out";;
+    *) echo "${1//,/ }";;
+  esac
+}
+
+integrate_cursor() {
+  local dst="$HOME/.cursor/rules/agent-message.mdc"
+  if [[ -L "$dst" ]]; then
+    echo "  cursor:   refusing to follow symlink at $dst" >&2
+    return 0
+  fi
+  if [[ -f "$dst" ]] && ! grep -qF "agent-message protocol — cross-agent messaging" "$dst"; then
+    echo "  cursor:   $dst exists with non-agent-message content; skipping" >&2
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  cat > "$dst" <<'CURSOR'
+---
+description: agent-message protocol — cross-agent messaging via local JSONL logs
+alwaysApply: false
+---
+
+When the user asks to send/check/reply to messages from other AI agents (Claude, opencode, Cursor, etc.), use the `~/.agent-message-cmd` wrapper:
+
+- Send: `echo '<body>' | ~/.agent-message-cmd send <recipient-alias>`
+- Check inbox: `~/.agent-message-cmd inbox`
+- Reply to last: `echo '<body>' | ~/.agent-message-cmd reply`
+
+Sender alias = `basename $(pwd)`, override via `.agent-message` file's first line.
+Spec: SAMP v1 — https://github.com/slima4/agent-message/blob/main/SPEC.md
+CURSOR
+  echo "  cursor:   $dst"
+}
+
+uninstall_cursor() {
+  rm -f "$HOME/.cursor/rules/agent-message.mdc"
+}
+
+integrate_copilot() {
+  if [[ ! -d ".git" ]]; then
+    echo "  copilot:  cwd is not a git repo; skipping (run from inside the target repo)" >&2
+    return 0
+  fi
+  if [[ -L ".github" || -L ".github/copilot-instructions.md" ]]; then
+    echo "  copilot:  refusing to follow symlink in .github/" >&2
+    return 0
+  fi
+  local dst=".github/copilot-instructions.md"
+  mkdir -p "$(dirname "$dst")"
+  if [[ -f "$dst" ]] && grep -qF "<!-- >>> agent-message >>> -->" "$dst"; then
+    echo "  copilot:  $dst (already integrated)"
+    return 0
+  fi
+  cat >> "$dst" <<'COPILOT'
+
+<!-- >>> agent-message >>> -->
+## Agent messaging (SAMP v1)
+
+To send/check/reply to messages from other AI agents, use the `~/.agent-message-cmd` wrapper:
+
+- Send: `echo '<body>' | ~/.agent-message-cmd send <recipient-alias>`
+- Check inbox: `~/.agent-message-cmd inbox`
+- Reply to last: `echo '<body>' | ~/.agent-message-cmd reply`
+
+Sender alias = `basename $(pwd)`, override via `.agent-message` file's first line.
+Spec: https://github.com/slima4/agent-message/blob/main/SPEC.md
+<!-- <<< agent-message <<< -->
+COPILOT
+  echo "  copilot:  $dst"
+}
+
+uninstall_copilot() {
+  local dst=".github/copilot-instructions.md"
+  [[ -f "$dst" ]] || return 0
+  python3 - "$dst" <<'PY'
+import sys, re, os
+p = sys.argv[1]
+with open(p) as f: s = f.read()
+s2 = re.sub(r"\n*<!-- >>> agent-message >>> -->.*?<!-- <<< agent-message <<< -->\n?", "\n", s, flags=re.DOTALL)
+if s2 == s:
+    sys.exit(0)
+s2 = s2.strip()
+if s2:
+    with open(p, "w") as f: f.write(s2 + "\n")
+else:
+    os.unlink(p)
+    parent = os.path.dirname(p)
+    try: os.rmdir(parent)
+    except OSError: pass
+PY
+}
+
+run_integrate() {
+  local tool
+  for tool in $(expand_integrations "$INTEGRATE"); do
+    case "$tool" in
+      cursor) integrate_cursor;;
+      copilot) integrate_copilot;;
+      *) echo "  unknown integrate target: $tool" >&2;;
+    esac
+  done
+}
+
+run_uninstall_integrate() {
+  local tool
+  for tool in $(expand_integrations "$INTEGRATE"); do
+    case "$tool" in
+      cursor) uninstall_cursor;;
+      copilot) uninstall_copilot;;
+      *) echo "  unknown integrate target: $tool" >&2;;
+    esac
+  done
+}
+
 if [[ "$UNINSTALL" -eq 1 ]]; then
+  if [[ -n "$INTEGRATE" ]]; then
+    # Partial: integrations only. Leave main install alone.
+    echo "Removing integrations:"
+    run_uninstall_integrate
+    exit 0
+  fi
   for f in "${CMDS[@]}"; do
     rm -f "$COMMANDS_DIR/$f"
   done
@@ -106,11 +241,18 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
     strip_rc_block "$rc"
   done
+  # Strip global integrations only. Per-repo integrations (copilot)
+  # require explicit `--uninstall --integrate=copilot` from the target repo
+  # to avoid mucking with foreign repos' .github/copilot-instructions.md.
+  uninstall_cursor
   echo "agent-message uninstalled."
   echo "  removed: ${CMDS[*]/#/$COMMANDS_DIR/}"
   echo "  removed: $MSG_DIR/{log-*.jsonl,.seen-*,.mtime-*} (dir removed if empty)"
   echo "  removed: $BIN_DST"
   echo "  removed: $SHELL_DST (and rc source blocks)"
+  echo "  removed: ~/.cursor/rules/agent-message.mdc (if present)"
+  echo "  note:    per-repo copilot integrations are NOT auto-stripped;"
+  echo "           run \`./install.sh --uninstall --integrate=copilot\` from each repo."
   exit 0
 fi
 
@@ -152,12 +294,18 @@ if [[ "$INSTALL_SHELL" -eq 1 ]]; then
             → open a new terminal, then: msg help"
 fi
 
+INTEGRATE_NOTE=""
+if [[ -n "$INTEGRATE" ]]; then
+  INTEGRATE_NOTE=$'\n\nIntegrations:\n'
+  INTEGRATE_NOTE+="$(run_integrate)"
+fi
+
 cat <<EOF
 agent-message installed.
 
   commands: $COMMANDS_DIR/{message-send,message-inbox,message-reply}.md
   wrapper:  $BIN_DST
-  dir:      $MSG_DIR  (per-agent logs: log-<alias>.jsonl)$SHELL_NOTE
+  dir:      $MSG_DIR  (per-agent logs: log-<alias>.jsonl)$SHELL_NOTE$INTEGRATE_NOTE
 
 Use from any Claude Code session (any repo, any path):
 

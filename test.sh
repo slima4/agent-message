@@ -301,6 +301,126 @@ test_msg_seen_deletion_forces_reread() {
 
 # ---- installer tests ----
 
+test_install_integrate_cursor() {
+  local fake_home="$TMP/cursor-home"
+  mkdir -p "$fake_home"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=cursor
+  )
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  assert_file_exists "$fake_home/.cursor/rules/agent-message.mdc" || return 1
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  assert_file_exists "$fake_home/.cursor/rules/agent-message.mdc" || return 1
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 || return 1
+  assert_file_missing "$fake_home/.cursor/rules/agent-message.mdc" || return 1
+  # partial uninstall: main install untouched
+  assert_file_exists "$fake_home/.agent-message-cmd" || return 1
+  assert_file_exists "$fake_home/.claude/commands/message-send.md"
+}
+
+test_install_integrate_copilot_preserves_user_content() {
+  local fake_home="$TMP/copilot-home"
+  local fake_repo="$TMP/copilot-repo"
+  mkdir -p "$fake_home" "$fake_repo/.github" "$fake_repo/.git"
+  printf '# Existing user content\nUse 4-space indent.\n' > "$fake_repo/.github/copilot-instructions.md"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=copilot
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  local content; content=$(cat "$fake_repo/.github/copilot-instructions.md")
+  assert_contains "$content" "Existing user content" "user content preserved on inject" || return 1
+  assert_contains "$content" "agent-message" "marker injected" || return 1
+  # Idempotent re-run
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  local n; n=$(grep -c "^<!-- >>> agent-message >>> -->" "$fake_repo/.github/copilot-instructions.md" || true)
+  assert_eq "1" "$n" "marker block once after re-run" || return 1
+  # Partial uninstall
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 ) || return 1
+  content=$(cat "$fake_repo/.github/copilot-instructions.md")
+  assert_contains "$content" "Existing user content" "user content preserved on uninstall" || return 1
+  if [[ "$content" == *"agent-message"* ]]; then
+    echo "  marker block not stripped"
+    return 1
+  fi
+}
+
+test_install_integrate_copilot_empty_file_removed() {
+  local fake_home="$TMP/copilot-empty-home"
+  local fake_repo="$TMP/copilot-empty-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=copilot
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  assert_file_exists "$fake_repo/.github/copilot-instructions.md" || return 1
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 ) || return 1
+  assert_file_missing "$fake_repo/.github/copilot-instructions.md"
+}
+
+test_install_integrate_all_and_full_uninstall() {
+  local fake_home="$TMP/all-home"
+  local fake_repo="$TMP/all-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=all
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  assert_file_exists "$fake_home/.cursor/rules/agent-message.mdc" || return 1
+  assert_file_exists "$fake_repo/.github/copilot-instructions.md" || return 1
+  # Full uninstall strips main + cursor (global), but NOT copilot (per-repo, explicit only).
+  local args_no_integ=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args_no_integ[@]}" --uninstall >/dev/null 2>&1 ) || return 1
+  assert_file_missing "$fake_home/.cursor/rules/agent-message.mdc" || return 1
+  assert_file_exists "$fake_repo/.github/copilot-instructions.md" || return 1
+  assert_file_missing "$fake_home/.agent-message-cmd" || return 1
+  # Explicit --uninstall --integrate=copilot from inside the repo strips it.
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" --integrate=copilot --uninstall >/dev/null 2>&1 ) || return 1
+  assert_file_missing "$fake_repo/.github/copilot-instructions.md"
+}
+
+test_install_integrate_copilot_skipped_outside_git_repo() {
+  local fake_home="$TMP/non-git-home"
+  local fake_dir="$TMP/non-git-dir"
+  mkdir -p "$fake_home" "$fake_dir"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=copilot
+  )
+  ( cd "$fake_dir" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  # No .github/ created in non-git dir
+  assert_file_missing "$fake_dir/.github/copilot-instructions.md"
+}
+
 test_installer_idempotent_and_uninstall() {
   local fake_home="$TMP/fake-home"
   mkdir -p "$fake_home"
@@ -377,6 +497,11 @@ TESTS=(
   test_msg_thread_strip_whitespace
   test_wrapper_symlink_log_blocks_write
   test_msg_seen_deletion_forces_reread
+  test_install_integrate_cursor
+  test_install_integrate_copilot_preserves_user_content
+  test_install_integrate_copilot_empty_file_removed
+  test_install_integrate_all_and_full_uninstall
+  test_install_integrate_copilot_skipped_outside_git_repo
   test_installer_idempotent_and_uninstall
   test_installer_rc_block_idempotent_and_stripped
 )
