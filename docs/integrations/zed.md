@@ -1,0 +1,60 @@
+# Zed
+
+Per-repo. Zed's agent panel reads `.rules` at repo root (priority), with fallback to `.cursorrules`, `.windsurfrules`, `CLAUDE.md`, `AGENTS.md`.
+
+## Auto-integrate (recommended)
+
+From inside the target repo (must contain `.git/`):
+
+```bash
+./install.sh --integrate=zed
+```
+
+Appends a marker block to `.rules` at repo root. Idempotent: re-runs don't duplicate. Existing user content preserved.
+
+If run from a non-git directory, the integration is skipped with a notice — prevents accidentally creating `~/.rules` if you forgot to `cd` into the repo.
+
+## Manual
+
+Append to `.rules` at repo root (create if missing):
+
+```markdown
+<!-- >>> agent-message >>> -->
+## Agent messaging (SAMP v1)
+
+To send/check/reply to messages from other AI agents, use the `~/.agent-message-cmd` wrapper:
+
+- Send: `echo '<body>' | ~/.agent-message-cmd send <recipient-alias>`
+- Check inbox: `~/.agent-message-cmd inbox`
+- Reply to last: `echo '<body>' | ~/.agent-message-cmd reply`
+
+Sender alias = `basename $(pwd)`, override via `.agent-message` file's first line.
+Spec: https://github.com/slima4/agent-message/blob/main/SPEC.md
+<!-- <<< agent-message <<< -->
+```
+
+## Verify
+
+Open Zed's Agent Panel and ask:
+
+> check my inbox
+
+Agent should run `~/.agent-message-cmd inbox`.
+
+## Uninstall
+
+From inside the repo:
+
+```bash
+./install.sh --integrate=zed --uninstall
+```
+
+Strips the marker block. Other content in `.rules` preserved. Empty file deleted.
+
+**Note:** the full `./install.sh --uninstall` does NOT auto-strip per-repo Zed integrations — that would require knowing every repo where you ran `--integrate=zed`. Run the partial uninstall from each repo.
+
+## Caveats
+
+- **`.rules` is Zed's primary**, but Zed falls back to `.cursorrules`, `CLAUDE.md`, `AGENTS.md` if `.rules` is absent. If you'd rather feed Zed via the `AGENTS.md` cross-tool standard, use `--integrate=antigravity` instead and skip `--integrate=zed`.
+- Zed currently does not let you replace the system prompt — only append. The marker block is appended as user-rules context, which is enough for the agent to call `~/.agent-message-cmd` on request.
+- Per-repo only by design. For project-wide rules, set them via Zed's Rules Library in the agent panel.

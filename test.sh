@@ -421,6 +421,226 @@ test_install_integrate_copilot_skipped_outside_git_repo() {
   assert_file_missing "$fake_dir/.github/copilot-instructions.md"
 }
 
+test_install_integrate_antigravity_preserves_user_content() {
+  local fake_home="$TMP/antigrav-home"
+  local fake_repo="$TMP/antigrav-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  printf '# Project rules\nUse 2-space indent.\n' > "$fake_repo/AGENTS.md"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  local content; content=$(cat "$fake_repo/AGENTS.md")
+  assert_contains "$content" "Project rules" "user content preserved on inject" || return 1
+  assert_contains "$content" "agent-message" "marker injected" || return 1
+  # Idempotent re-run
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  local n; n=$(grep -c "^<!-- >>> agent-message >>> -->" "$fake_repo/AGENTS.md" || true)
+  assert_eq "1" "$n" "marker block once after re-run" || return 1
+  # Partial uninstall preserves user content
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 ) || return 1
+  content=$(cat "$fake_repo/AGENTS.md")
+  assert_contains "$content" "Project rules" "user content preserved on uninstall" || return 1
+  if [[ "$content" == *"agent-message"* ]]; then
+    echo "  marker block not stripped"
+    return 1
+  fi
+}
+
+test_install_integrate_antigravity_empty_file_removed() {
+  local fake_home="$TMP/antigrav-empty-home"
+  local fake_repo="$TMP/antigrav-empty-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  assert_file_exists "$fake_repo/AGENTS.md" || return 1
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 ) || return 1
+  assert_file_missing "$fake_repo/AGENTS.md"
+}
+
+test_install_integrate_antigravity_skipped_outside_git_repo() {
+  local fake_home="$TMP/antigrav-non-git-home"
+  local fake_dir="$TMP/antigrav-non-git-dir"
+  mkdir -p "$fake_home" "$fake_dir"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  ( cd "$fake_dir" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  assert_file_missing "$fake_dir/AGENTS.md"
+}
+
+test_install_integrate_zed_preserves_user_content() {
+  local fake_home="$TMP/zed-home"
+  local fake_repo="$TMP/zed-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  printf 'Use TypeScript strict mode.\n' > "$fake_repo/.rules"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=zed
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  local content; content=$(cat "$fake_repo/.rules")
+  assert_contains "$content" "TypeScript strict mode" "user content preserved on inject" || return 1
+  assert_contains "$content" "agent-message" "marker injected" || return 1
+  # Idempotent
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  local n; n=$(grep -c "^<!-- >>> agent-message >>> -->" "$fake_repo/.rules" || true)
+  assert_eq "1" "$n" "marker once after re-run" || return 1
+  # Partial uninstall
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 ) || return 1
+  content=$(cat "$fake_repo/.rules")
+  assert_contains "$content" "TypeScript strict mode" "user content preserved on uninstall" || return 1
+  if [[ "$content" == *"agent-message"* ]]; then
+    echo "  marker block not stripped"
+    return 1
+  fi
+}
+
+test_install_integrate_zed_empty_file_removed() {
+  local fake_home="$TMP/zed-empty-home"
+  local fake_repo="$TMP/zed-empty-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=zed
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  assert_file_exists "$fake_repo/.rules" || return 1
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 ) || return 1
+  assert_file_missing "$fake_repo/.rules"
+}
+
+test_install_integrate_zed_skipped_outside_git_repo() {
+  local fake_home="$TMP/zed-non-git-home"
+  local fake_dir="$TMP/zed-non-git-dir"
+  mkdir -p "$fake_home" "$fake_dir"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=zed
+  )
+  ( cd "$fake_dir" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  assert_file_missing "$fake_dir/.rules"
+}
+
+test_install_integrate_refuses_symlinked_dotgit() {
+  local fake_home="$TMP/sym-dotgit-home"
+  local fake_repo="$TMP/sym-dotgit-repo"
+  local foreign_dir="$TMP/foreign"
+  mkdir -p "$fake_home" "$fake_repo" "$foreign_dir"
+  ln -s "$foreign_dir" "$fake_repo/.git"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  # Symlinked .git must NOT satisfy the gate — file should not be written.
+  assert_file_missing "$fake_repo/AGENTS.md"
+}
+
+test_install_integrate_refuses_symlinked_target() {
+  local fake_home="$TMP/sym-target-home"
+  local fake_repo="$TMP/sym-target-repo"
+  local foreign_file="$TMP/sensitive-file"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  printf 'sensitive content\n' > "$foreign_file"
+  ln -s "$foreign_file" "$fake_repo/AGENTS.md"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  # Symlink target must NOT have been written through.
+  local content; content=$(cat "$foreign_file")
+  assert_eq "sensitive content" "$content" "symlink target unchanged"
+}
+
+test_install_uninstall_preserves_attacker_planted_marker_pair() {
+  # Attacker ships AGENTS.md with the marker pair wrapping non-canonical content.
+  # Exact-match strip must NOT delete it (regex predecessor would have).
+  local fake_home="$TMP/atk-home"
+  local fake_repo="$TMP/atk-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  cat > "$fake_repo/AGENTS.md" <<'PLANTED'
+# Project rules
+
+<!-- >>> agent-message >>> -->
+arbitrary user content the attacker wants to delete
+<!-- <<< agent-message <<< -->
+
+More legitimate content here.
+PLANTED
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  # User runs uninstall, expecting a no-op. Must NOT touch the file.
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 ) || return 1
+  local content; content=$(cat "$fake_repo/AGENTS.md")
+  assert_contains "$content" "arbitrary user content the attacker wants to delete" \
+    "non-canonical block survives uninstall" || return 1
+  assert_contains "$content" "More legitimate content" "trailing content survives"
+}
+
+test_install_integrate_all_includes_antigravity_and_zed() {
+  local fake_home="$TMP/all-new-home"
+  local fake_repo="$TMP/all-new-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=all
+  )
+  ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  assert_file_exists "$fake_home/.cursor/rules/agent-message.mdc" || return 1
+  assert_file_exists "$fake_repo/.github/copilot-instructions.md" || return 1
+  assert_file_exists "$fake_repo/AGENTS.md" || return 1
+  assert_file_exists "$fake_repo/.rules"
+}
+
 test_installer_idempotent_and_uninstall() {
   local fake_home="$TMP/fake-home"
   mkdir -p "$fake_home"
@@ -502,6 +722,16 @@ TESTS=(
   test_install_integrate_copilot_empty_file_removed
   test_install_integrate_all_and_full_uninstall
   test_install_integrate_copilot_skipped_outside_git_repo
+  test_install_integrate_antigravity_preserves_user_content
+  test_install_integrate_antigravity_empty_file_removed
+  test_install_integrate_antigravity_skipped_outside_git_repo
+  test_install_integrate_zed_preserves_user_content
+  test_install_integrate_zed_empty_file_removed
+  test_install_integrate_zed_skipped_outside_git_repo
+  test_install_integrate_refuses_symlinked_dotgit
+  test_install_integrate_refuses_symlinked_target
+  test_install_uninstall_preserves_attacker_planted_marker_pair
+  test_install_integrate_all_includes_antigravity_and_zed
   test_installer_idempotent_and_uninstall
   test_installer_rc_block_idempotent_and_stripped
 )

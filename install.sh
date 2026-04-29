@@ -12,9 +12,10 @@
 #   --shell <path>      Override shell helper install path (default: $HOME/.agent-message.sh)
 #   --bin <path>        Override wrapper install path (default: $HOME/.agent-message-cmd)
 #   --no-shell          Skip shell helper install
-#   --integrate=<list>  Wire up other agents. Tools: cursor, copilot, all, auto.
-#                       Comma-separated. With --uninstall, strips only listed tools.
-#                       Without --uninstall, integrates them on top of main install.
+#   --integrate=<list>  Wire up other agents. Tools: cursor, copilot, antigravity,
+#                       zed, all, auto. Comma-separated. With --uninstall, strips
+#                       only listed tools. Without --uninstall, integrates them on
+#                       top of main install.
 #   --uninstall         Remove installed commands, wrapper, shell helper, message dir,
 #                       and all known integrations (or only --integrate=<list> if set).
 #   -h, --help          Show this help
@@ -51,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     --integrate=*) INTEGRATE="${1#*=}";;
     --uninstall) UNINSTALL=1;;
     -h|--help)
-      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *) echo "unknown option: $1" >&2; exit 2;;
   esac
@@ -102,11 +103,15 @@ inject_rc_block() {
 expand_integrations() {
   case "$1" in
     "") return 0;;
-    all) echo "cursor copilot";;
+    all) echo "cursor copilot antigravity zed";;
     auto)
       local out=""
       [[ -d "$HOME/.cursor" ]] && out="$out cursor"
       [[ -d ".git" ]] && out="$out copilot"
+      [[ -d "$HOME/.gemini" ]] && out="$out antigravity"
+      if [[ -d "$HOME/.config/zed" || -d "$HOME/Library/Application Support/Zed" ]]; then
+        out="$out zed"
+      fi
       echo "$out";;
     *) echo "${1//,/ }";;
   esac
@@ -145,22 +150,10 @@ uninstall_cursor() {
   rm -f "$HOME/.cursor/rules/agent-message.mdc"
 }
 
-integrate_copilot() {
-  if [[ ! -d ".git" ]]; then
-    echo "  copilot:  cwd is not a git repo; skipping (run from inside the target repo)" >&2
-    return 0
-  fi
-  if [[ -L ".github" || -L ".github/copilot-instructions.md" ]]; then
-    echo "  copilot:  refusing to follow symlink in .github/" >&2
-    return 0
-  fi
-  local dst=".github/copilot-instructions.md"
-  mkdir -p "$(dirname "$dst")"
-  if [[ -f "$dst" ]] && grep -qF "<!-- >>> agent-message >>> -->" "$dst"; then
-    echo "  copilot:  $dst (already integrated)"
-    return 0
-  fi
-  cat >> "$dst" <<'COPILOT'
+# Canonical marker block — single source of truth shared by all per-repo integrations.
+# Updating wording here updates write + uninstall consistently.
+marker_block() {
+  cat <<'BLOCK'
 
 <!-- >>> agent-message >>> -->
 ## Agent messaging (SAMP v1)
@@ -174,30 +167,101 @@ To send/check/reply to messages from other AI agents, use the `~/.agent-message-
 Sender alias = `basename $(pwd)`, override via `.agent-message` file's first line.
 Spec: https://github.com/slima4/agent-message/blob/main/SPEC.md
 <!-- <<< agent-message <<< -->
-COPILOT
-  echo "  copilot:  $dst"
+BLOCK
 }
 
-uninstall_copilot() {
-  local dst=".github/copilot-instructions.md"
+# Append marker block via O_NOFOLLOW — refuses to follow symlinks (TOCTOU-safe).
+append_marker_block() {
+  local dst="$1" block; block=$(marker_block)
+  python3 - "$dst" "$block" <<'PY'
+import sys, os
+p, data = sys.argv[1], sys.argv[2]
+try:
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644)
+except OSError:
+    print(f"  refusing to follow symlink at {p}", file=sys.stderr)
+    sys.exit(1)
+with os.fdopen(fd, "a") as f:
+    f.write(data + "\n")
+PY
+}
+
+# Strip the canonical marker block by EXACT-match substring removal.
+# Defends against attacker-planted marker pairs wrapping legitimate user content:
+# the regex-based predecessor would have stripped `<open>...arbitrary user content...<close>`.
+# This implementation only removes byte-for-byte what we wrote.
+strip_marker_block() {
+  local dst="$1"
   [[ -f "$dst" ]] || return 0
-  python3 - "$dst" <<'PY'
-import sys, re, os
-p = sys.argv[1]
+  local expected; expected=$(marker_block)
+  python3 - "$dst" "$expected" <<'PY'
+import sys, os
+p, expected = sys.argv[1], sys.argv[2]
 with open(p) as f: s = f.read()
-s2 = re.sub(r"\n*<!-- >>> agent-message >>> -->.*?<!-- <<< agent-message <<< -->\n?", "\n", s, flags=re.DOTALL)
-if s2 == s:
+if expected not in s:
     sys.exit(0)
-s2 = s2.strip()
+s2 = s.replace(expected, "", 1).strip()
 if s2:
     with open(p, "w") as f: f.write(s2 + "\n")
 else:
     os.unlink(p)
-    parent = os.path.dirname(p)
-    try: os.rmdir(parent)
-    except OSError: pass
 PY
 }
+
+# Real git repo only — refuse if cwd is not under .git/, or .git is a symlink.
+# Symlinked .git could be planted by a malicious checkout to satisfy the gate.
+in_real_git_repo() {
+  [[ -d ".git" && ! -L ".git" ]]
+}
+
+integrate_copilot() {
+  if ! in_real_git_repo; then
+    echo "  copilot: cwd is not a git repo; skipping (run from inside the target repo)" >&2
+    return 0
+  fi
+  if [[ -L ".github" ]]; then
+    echo "  copilot: refusing to follow symlink at .github" >&2
+    return 0
+  fi
+  mkdir -p ".github"
+  local dst=".github/copilot-instructions.md"
+  if [[ -f "$dst" ]] && grep -qF "<!-- >>> agent-message >>> -->" "$dst"; then
+    echo "  copilot: $dst (already integrated)"
+    return 0
+  fi
+  if append_marker_block "$dst"; then
+    echo "  copilot: $dst"
+  fi
+}
+
+uninstall_copilot() {
+  strip_marker_block ".github/copilot-instructions.md"
+  rmdir ".github" 2>/dev/null || true
+}
+
+integrate_repo_root_md() {
+  local label="$1" dst="$2"
+  if ! in_real_git_repo; then
+    echo "  $label: cwd is not a git repo; skipping (run from inside the target repo)" >&2
+    return 0
+  fi
+  if [[ -f "$dst" ]] && grep -qF "<!-- >>> agent-message >>> -->" "$dst"; then
+    echo "  $label: $dst (already integrated)"
+    return 0
+  fi
+  if append_marker_block "$dst"; then
+    echo "  $label: $dst"
+  fi
+}
+
+uninstall_repo_root_md() {
+  strip_marker_block "$1"
+}
+
+integrate_antigravity() { integrate_repo_root_md "antigravity" "AGENTS.md"; }
+uninstall_antigravity() { uninstall_repo_root_md "AGENTS.md"; }
+integrate_zed()         { integrate_repo_root_md "zed" ".rules"; }
+uninstall_zed()         { uninstall_repo_root_md ".rules"; }
 
 run_integrate() {
   local tool
@@ -205,6 +269,8 @@ run_integrate() {
     case "$tool" in
       cursor) integrate_cursor;;
       copilot) integrate_copilot;;
+      antigravity) integrate_antigravity;;
+      zed) integrate_zed;;
       *) echo "  unknown integrate target: $tool" >&2;;
     esac
   done
@@ -216,6 +282,8 @@ run_uninstall_integrate() {
     case "$tool" in
       cursor) uninstall_cursor;;
       copilot) uninstall_copilot;;
+      antigravity) uninstall_antigravity;;
+      zed) uninstall_zed;;
       *) echo "  unknown integrate target: $tool" >&2;;
     esac
   done
@@ -251,8 +319,9 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   echo "  removed: $BIN_DST"
   echo "  removed: $SHELL_DST (and rc source blocks)"
   echo "  removed: ~/.cursor/rules/agent-message.mdc (if present)"
-  echo "  note:    per-repo copilot integrations are NOT auto-stripped;"
-  echo "           run \`./install.sh --uninstall --integrate=copilot\` from each repo."
+  echo "  note:    per-repo integrations (copilot, antigravity, zed) are NOT"
+  echo "           auto-stripped; run \`./install.sh --uninstall --integrate=<tool>\`"
+  echo "           from each repo to remove them."
   exit 0
 fi
 

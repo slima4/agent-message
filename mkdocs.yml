@@ -32,6 +32,8 @@ nav:
     - Overview: integrations/index.md
     - Cursor: integrations/cursor.md
     - GitHub Copilot: integrations/copilot.md
+    - Google Antigravity: integrations/antigravity.md
+    - Zed: integrations/zed.md
     - opencode: integrations/opencode.md
     - Continue.dev: integrations/continue.md
     - Aider: integrations/aider.md
