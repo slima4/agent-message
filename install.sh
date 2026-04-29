@@ -12,10 +12,17 @@
 #   --shell <path>      Override shell helper install path (default: $HOME/.agent-message.sh)
 #   --bin <path>        Override wrapper install path (default: $HOME/.agent-message-cmd)
 #   --no-shell          Skip shell helper install
-#   --integrate=<list>  Wire up other agents. Tools: cursor, copilot, antigravity,
-#                       zed, all, auto. Comma-separated. With --uninstall, strips
-#                       only listed tools. Without --uninstall, integrates them on
-#                       top of main install.
+#   --integrate=<list>  Wire up other agents. Comma-separated. Tools:
+#                         cursor            global ~/.cursor/rules/agent-message.mdc
+#                         copilot           per-repo .github/copilot-instructions.md
+#                         copilot-cli       global ~/.copilot/copilot-instructions.md
+#                         antigravity       global ~/.gemini/AGENTS.md
+#                         antigravity-repo  per-repo ./AGENTS.md
+#                         zed               per-repo ./.rules
+#                         all               cursor + copilot + copilot-cli + antigravity + zed
+#                         auto              detect installed tools and integrate
+#                       With --uninstall, strips only listed tools. Without
+#                       --uninstall, integrates them on top of main install.
 #   --uninstall         Remove installed commands, wrapper, shell helper, message dir,
 #                       and all known integrations (or only --integrate=<list> if set).
 #   -h, --help          Show this help
@@ -52,7 +59,7 @@ while [[ $# -gt 0 ]]; do
     --integrate=*) INTEGRATE="${1#*=}";;
     --uninstall) UNINSTALL=1;;
     -h|--help)
-      sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *) echo "unknown option: $1" >&2; exit 2;;
   esac
@@ -103,11 +110,12 @@ inject_rc_block() {
 expand_integrations() {
   case "$1" in
     "") return 0;;
-    all) echo "cursor copilot antigravity zed";;
+    all) echo "cursor copilot copilot-cli antigravity zed";;
     auto)
       local out=""
       [[ -d "$HOME/.cursor" ]] && out="$out cursor"
       [[ -d ".git" ]] && out="$out copilot"
+      [[ -d "$HOME/.copilot" ]] && out="$out copilot-cli"
       [[ -d "$HOME/.gemini" ]] && out="$out antigravity"
       if [[ -d "$HOME/.config/zed" || -d "$HOME/Library/Application Support/Zed" ]]; then
         out="$out zed"
@@ -258,10 +266,53 @@ uninstall_repo_root_md() {
   strip_marker_block "$1"
 }
 
-integrate_antigravity() { integrate_repo_root_md "antigravity" "AGENTS.md"; }
-uninstall_antigravity() { uninstall_repo_root_md "AGENTS.md"; }
-integrate_zed()         { integrate_repo_root_md "zed" ".rules"; }
-uninstall_zed()         { uninstall_repo_root_md ".rules"; }
+# Append marker to a per-user global path under $HOME (no repo gate, no cwd dependency).
+# Defends against:
+#   - symlinked parent dir (e.g. ~/.gemini → /attacker/dir): mkdir -p silently no-ops on
+#     a symlink-to-dir, after which O_NOFOLLOW on the final component does NOT fire.
+#     Refuse if dirname is a symlink before creating or writing.
+#   - symlinked target file: O_NOFOLLOW in append_marker_block.
+integrate_global_md() {
+  local label="$1" dst="$2" parent
+  parent=$(dirname "$dst")
+  if [[ -L "$parent" ]]; then
+    echo "  $label: refusing — $parent is a symlink" >&2
+    return 0
+  fi
+  mkdir -p "$parent"
+  if [[ -L "$parent" ]]; then
+    # mkdir -p might race-create or follow a newly-planted symlink. Re-check.
+    echo "  $label: refusing — $parent is a symlink (post-mkdir)" >&2
+    return 0
+  fi
+  if [[ -f "$dst" ]] && grep -qF "<!-- >>> agent-message >>> -->" "$dst"; then
+    echo "  $label: $dst (already integrated)"
+    return 0
+  fi
+  if append_marker_block "$dst"; then
+    echo "  $label: $dst"
+  fi
+}
+
+uninstall_global_md() {
+  strip_marker_block "$1"
+}
+
+# Antigravity: default to global (~/.gemini/AGENTS.md, also read by Gemini CLI).
+# Per-repo opt-in via --integrate=antigravity-repo.
+integrate_antigravity()      { integrate_global_md  "antigravity"      "$HOME/.gemini/AGENTS.md"; }
+uninstall_antigravity()      { uninstall_global_md  "$HOME/.gemini/AGENTS.md"; }
+integrate_antigravity_repo() { integrate_repo_root_md "antigravity-repo" "AGENTS.md"; }
+uninstall_antigravity_repo() { uninstall_repo_root_md "AGENTS.md"; }
+
+# Copilot CLI is distinct from Copilot Chat. CLI reads ~/.copilot/copilot-instructions.md
+# globally; Chat reads .github/copilot-instructions.md per-repo.
+integrate_copilot_cli()      { integrate_global_md  "copilot-cli"      "$HOME/.copilot/copilot-instructions.md"; }
+uninstall_copilot_cli()      { uninstall_global_md  "$HOME/.copilot/copilot-instructions.md"; }
+
+# Zed: per-repo only. Global rules live in an LMDB binary (Rules Library) — not safely scriptable.
+integrate_zed()              { integrate_repo_root_md "zed" ".rules"; }
+uninstall_zed()              { uninstall_repo_root_md ".rules"; }
 
 run_integrate() {
   local tool
@@ -269,7 +320,9 @@ run_integrate() {
     case "$tool" in
       cursor) integrate_cursor;;
       copilot) integrate_copilot;;
+      copilot-cli) integrate_copilot_cli;;
       antigravity) integrate_antigravity;;
+      antigravity-repo) integrate_antigravity_repo;;
       zed) integrate_zed;;
       *) echo "  unknown integrate target: $tool" >&2;;
     esac
@@ -282,7 +335,9 @@ run_uninstall_integrate() {
     case "$tool" in
       cursor) uninstall_cursor;;
       copilot) uninstall_copilot;;
+      copilot-cli) uninstall_copilot_cli;;
       antigravity) uninstall_antigravity;;
+      antigravity-repo) uninstall_antigravity_repo;;
       zed) uninstall_zed;;
       *) echo "  unknown integrate target: $tool" >&2;;
     esac
@@ -309,17 +364,21 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
     strip_rc_block "$rc"
   done
-  # Strip global integrations only. Per-repo integrations (copilot)
-  # require explicit `--uninstall --integrate=copilot` from the target repo
-  # to avoid mucking with foreign repos' .github/copilot-instructions.md.
+  # Strip global integrations. Per-repo ones (copilot, antigravity-repo, zed)
+  # require explicit `--uninstall --integrate=<tool>` from the target repo
+  # to avoid mucking with foreign repos.
   uninstall_cursor
+  uninstall_copilot_cli
+  uninstall_antigravity
   echo "agent-message uninstalled."
   echo "  removed: ${CMDS[*]/#/$COMMANDS_DIR/}"
   echo "  removed: $MSG_DIR/{log-*.jsonl,.seen-*,.mtime-*} (dir removed if empty)"
   echo "  removed: $BIN_DST"
   echo "  removed: $SHELL_DST (and rc source blocks)"
   echo "  removed: ~/.cursor/rules/agent-message.mdc (if present)"
-  echo "  note:    per-repo integrations (copilot, antigravity, zed) are NOT"
+  echo "  removed: ~/.copilot/copilot-instructions.md marker block (if present)"
+  echo "  removed: ~/.gemini/AGENTS.md marker block (if present)"
+  echo "  note:    per-repo integrations (copilot, antigravity-repo, zed) are NOT"
   echo "           auto-stripped; run \`./install.sh --uninstall --integrate=<tool>\`"
   echo "           from each repo to remove them."
   exit 0

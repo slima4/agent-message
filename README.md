@@ -62,15 +62,17 @@ Idempotent — safe to re-run. Open a new terminal after first install so the sh
 Optional one-line integrations for other agents:
 
 ```bash
-./install.sh --integrate=cursor       # ~/.cursor/rules/agent-message.mdc
-./install.sh --integrate=copilot      # .github/copilot-instructions.md (cwd repo)
-./install.sh --integrate=antigravity  # AGENTS.md (cwd repo) — also read by Cursor + Claude Code
-./install.sh --integrate=zed          # .rules (cwd repo)
-./install.sh --integrate=all          # all of the above
-./install.sh --integrate=auto         # detect installed tools and integrate
+./install.sh --integrate=cursor            # global  ~/.cursor/rules/agent-message.mdc
+./install.sh --integrate=copilot-cli       # global  ~/.copilot/copilot-instructions.md
+./install.sh --integrate=antigravity       # global  ~/.gemini/AGENTS.md (Antigravity + Gemini CLI)
+./install.sh --integrate=copilot           # per-repo .github/copilot-instructions.md (Copilot Chat)
+./install.sh --integrate=antigravity-repo  # per-repo ./AGENTS.md (cross-tool, opt-in)
+./install.sh --integrate=zed               # per-repo ./.rules
+./install.sh --integrate=all               # global ones + per-repo copilot + zed (skips antigravity-repo)
+./install.sh --integrate=auto              # detect installed tools and integrate
 ```
 
-See [`docs/integrations/`](docs/integrations/index.md) for per-tool guides (Cursor, Copilot, Antigravity, Zed, opencode, Continue, Aider).
+See [`docs/integrations/`](docs/integrations/index.md) for per-tool guides.
 
 ## Use
 

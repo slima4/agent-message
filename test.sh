@@ -421,8 +421,8 @@ test_install_integrate_copilot_skipped_outside_git_repo() {
   assert_file_missing "$fake_dir/.github/copilot-instructions.md"
 }
 
-test_install_integrate_antigravity_preserves_user_content() {
-  local fake_home="$TMP/antigrav-home"
+test_install_integrate_antigravity_repo_preserves_user_content() {
+  local fake_home="$TMP/antigrav-repo-home"
   local fake_repo="$TMP/antigrav-repo"
   mkdir -p "$fake_home" "$fake_repo/.git"
   printf '# Project rules\nUse 2-space indent.\n' > "$fake_repo/AGENTS.md"
@@ -432,7 +432,7 @@ test_install_integrate_antigravity_preserves_user_content() {
     --shell "$fake_home/.agent-message.sh"
     --bin "$fake_home/.agent-message-cmd"
     --no-shell
-    --integrate=antigravity
+    --integrate=antigravity-repo
   )
   ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
   local content; content=$(cat "$fake_repo/AGENTS.md")
@@ -452,7 +452,7 @@ test_install_integrate_antigravity_preserves_user_content() {
   fi
 }
 
-test_install_integrate_antigravity_empty_file_removed() {
+test_install_integrate_antigravity_repo_empty_file_removed() {
   local fake_home="$TMP/antigrav-empty-home"
   local fake_repo="$TMP/antigrav-empty-repo"
   mkdir -p "$fake_home" "$fake_repo/.git"
@@ -462,7 +462,7 @@ test_install_integrate_antigravity_empty_file_removed() {
     --shell "$fake_home/.agent-message.sh"
     --bin "$fake_home/.agent-message-cmd"
     --no-shell
-    --integrate=antigravity
+    --integrate=antigravity-repo
   )
   ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
   assert_file_exists "$fake_repo/AGENTS.md" || return 1
@@ -470,7 +470,7 @@ test_install_integrate_antigravity_empty_file_removed() {
   assert_file_missing "$fake_repo/AGENTS.md"
 }
 
-test_install_integrate_antigravity_skipped_outside_git_repo() {
+test_install_integrate_antigravity_repo_skipped_outside_git_repo() {
   local fake_home="$TMP/antigrav-non-git-home"
   local fake_dir="$TMP/antigrav-non-git-dir"
   mkdir -p "$fake_home" "$fake_dir"
@@ -480,10 +480,111 @@ test_install_integrate_antigravity_skipped_outside_git_repo() {
     --shell "$fake_home/.agent-message.sh"
     --bin "$fake_home/.agent-message-cmd"
     --no-shell
-    --integrate=antigravity
+    --integrate=antigravity-repo
   )
   ( cd "$fake_dir" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
   assert_file_missing "$fake_dir/AGENTS.md"
+}
+
+test_install_integrate_antigravity_global_writes_to_home_gemini() {
+  local fake_home="$TMP/antigrav-global-home"
+  mkdir -p "$fake_home"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  local dst="$fake_home/.gemini/AGENTS.md"
+  assert_file_exists "$dst" || return 1
+  grep -qF "<!-- >>> agent-message >>> -->" "$dst" || { echo "  marker not in $dst"; return 1; }
+  # Idempotent re-run
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  local n; n=$(grep -c "^<!-- >>> agent-message >>> -->" "$dst" || true)
+  assert_eq "1" "$n" "marker once after re-run" || return 1
+  # Partial uninstall removes empty file
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 || return 1
+  assert_file_missing "$dst"
+}
+
+test_install_integrate_antigravity_global_preserves_existing_gemini_md() {
+  local fake_home="$TMP/antigrav-global-pre-home"
+  mkdir -p "$fake_home/.gemini"
+  printf '# Existing Gemini rules\nbe terse.\n' > "$fake_home/.gemini/AGENTS.md"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  local dst="$fake_home/.gemini/AGENTS.md"
+  local content; content=$(cat "$dst")
+  assert_contains "$content" "Existing Gemini rules" "user content preserved on inject" || return 1
+  assert_contains "$content" "agent-message" "marker injected" || return 1
+  # Partial uninstall preserves user content
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 || return 1
+  content=$(cat "$dst")
+  assert_contains "$content" "Existing Gemini rules" "user content preserved on uninstall" || return 1
+  if [[ "$content" == *"agent-message"* ]]; then
+    echo "  marker block not stripped"
+    return 1
+  fi
+}
+
+test_install_integrate_copilot_cli_writes_to_home_copilot() {
+  local fake_home="$TMP/copilot-cli-home"
+  mkdir -p "$fake_home"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=copilot-cli
+  )
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  local dst="$fake_home/.copilot/copilot-instructions.md"
+  assert_file_exists "$dst" || return 1
+  grep -qF "<!-- >>> agent-message >>> -->" "$dst" || { echo "  marker not in $dst"; return 1; }
+  # Idempotent
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  local n; n=$(grep -c "^<!-- >>> agent-message >>> -->" "$dst" || true)
+  assert_eq "1" "$n" "marker once after re-run" || return 1
+  # Uninstall
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 || return 1
+  assert_file_missing "$dst"
+}
+
+test_install_integrate_copilot_cli_preserves_existing_instructions() {
+  local fake_home="$TMP/copilot-cli-pre-home"
+  mkdir -p "$fake_home/.copilot"
+  printf '# My personal Copilot rules\nUse pytest.\n' > "$fake_home/.copilot/copilot-instructions.md"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=copilot-cli
+  )
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  local dst="$fake_home/.copilot/copilot-instructions.md"
+  local content; content=$(cat "$dst")
+  assert_contains "$content" "My personal Copilot rules" "user content preserved on inject" || return 1
+  assert_contains "$content" "agent-message" "marker injected" || return 1
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 || return 1
+  content=$(cat "$dst")
+  assert_contains "$content" "My personal Copilot rules" "user content preserved on uninstall" || return 1
+  if [[ "$content" == *"agent-message"* ]]; then
+    echo "  marker block not stripped"
+    return 1
+  fi
 }
 
 test_install_integrate_zed_preserves_user_content() {
@@ -563,7 +664,7 @@ test_install_integrate_refuses_symlinked_dotgit() {
     --shell "$fake_home/.agent-message.sh"
     --bin "$fake_home/.agent-message-cmd"
     --no-shell
-    --integrate=antigravity
+    --integrate=antigravity-repo
   )
   ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
   # Symlinked .git must NOT satisfy the gate — file should not be written.
@@ -583,12 +684,89 @@ test_install_integrate_refuses_symlinked_target() {
     --shell "$fake_home/.agent-message.sh"
     --bin "$fake_home/.agent-message-cmd"
     --no-shell
-    --integrate=antigravity
+    --integrate=antigravity-repo
   )
   ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
   # Symlink target must NOT have been written through.
   local content; content=$(cat "$foreign_file")
   assert_eq "sensitive content" "$content" "symlink target unchanged"
+}
+
+test_install_integrate_global_refuses_symlinked_parent_dir() {
+  # Symlinked parent dir (e.g. ~/.gemini → /attacker/dir) bypasses O_NOFOLLOW
+  # because the FINAL component is not a symlink. Helper must refuse pre-write.
+  local fake_home="$TMP/sym-parent-home"
+  local attacker_dir="$TMP/attacker"
+  mkdir -p "$fake_home" "$attacker_dir"
+  ln -s "$attacker_dir" "$fake_home/.gemini"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  # No file written under the attacker dir.
+  assert_file_missing "$attacker_dir/AGENTS.md" || return 1
+  # And nothing written under the symlink path itself.
+  if [[ -e "$fake_home/.gemini/AGENTS.md" && ! -L "$fake_home/.gemini/AGENTS.md" ]]; then
+    # Only fails if the file was created via the symlink.
+    if [[ -f "$attacker_dir/AGENTS.md" ]]; then
+      echo "  symlinked parent was followed; attacker dir written"
+      return 1
+    fi
+  fi
+}
+
+test_install_uninstall_global_preserves_attacker_planted_marker() {
+  # Same defense as per-repo: exact-match strip must not delete attacker-planted
+  # marker pairs around legitimate user content in the global global path.
+  local fake_home="$TMP/atk-global-home"
+  mkdir -p "$fake_home/.gemini"
+  cat > "$fake_home/.gemini/AGENTS.md" <<'PLANTED'
+# Existing rules
+
+<!-- >>> agent-message >>> -->
+arbitrary content the attacker wants to delete via uninstall
+<!-- <<< agent-message <<< -->
+
+More rules.
+PLANTED
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 || return 1
+  local content; content=$(cat "$fake_home/.gemini/AGENTS.md")
+  assert_contains "$content" "arbitrary content the attacker wants to delete" \
+    "non-canonical block survives uninstall" || return 1
+  assert_contains "$content" "More rules" "trailing content survives"
+}
+
+test_install_integrate_global_refuses_symlinked_target() {
+  # O_NOFOLLOW must also defend the global path (~/.gemini/AGENTS.md).
+  local fake_home="$TMP/sym-global-home"
+  local foreign_file="$TMP/sensitive-global"
+  mkdir -p "$fake_home/.gemini"
+  printf 'sensitive\n' > "$foreign_file"
+  ln -s "$foreign_file" "$fake_home/.gemini/AGENTS.md"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+    --integrate=antigravity
+  )
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  local content; content=$(cat "$foreign_file")
+  assert_eq "sensitive" "$content" "global symlink target unchanged"
 }
 
 test_install_uninstall_preserves_attacker_planted_marker_pair() {
@@ -612,7 +790,7 @@ PLANTED
     --shell "$fake_home/.agent-message.sh"
     --bin "$fake_home/.agent-message-cmd"
     --no-shell
-    --integrate=antigravity
+    --integrate=antigravity-repo
   )
   # User runs uninstall, expecting a no-op. Must NOT touch the file.
   ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 ) || return 1
@@ -622,7 +800,7 @@ PLANTED
   assert_contains "$content" "More legitimate content" "trailing content survives"
 }
 
-test_install_integrate_all_includes_antigravity_and_zed() {
+test_install_integrate_all_includes_global_and_per_repo() {
   local fake_home="$TMP/all-new-home"
   local fake_repo="$TMP/all-new-repo"
   mkdir -p "$fake_home" "$fake_repo/.git"
@@ -635,10 +813,15 @@ test_install_integrate_all_includes_antigravity_and_zed() {
     --integrate=all
   )
   ( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 ) || return 1
+  # Global integrations
   assert_file_exists "$fake_home/.cursor/rules/agent-message.mdc" || return 1
+  assert_file_exists "$fake_home/.gemini/AGENTS.md" || return 1
+  assert_file_exists "$fake_home/.copilot/copilot-instructions.md" || return 1
+  # Per-repo (cwd) integrations — `all` does NOT include antigravity-repo
   assert_file_exists "$fake_repo/.github/copilot-instructions.md" || return 1
-  assert_file_exists "$fake_repo/AGENTS.md" || return 1
-  assert_file_exists "$fake_repo/.rules"
+  assert_file_exists "$fake_repo/.rules" || return 1
+  # antigravity-repo is opt-in only; --integrate=all should NOT have written ./AGENTS.md
+  assert_file_missing "$fake_repo/AGENTS.md"
 }
 
 test_installer_idempotent_and_uninstall() {
@@ -722,16 +905,23 @@ TESTS=(
   test_install_integrate_copilot_empty_file_removed
   test_install_integrate_all_and_full_uninstall
   test_install_integrate_copilot_skipped_outside_git_repo
-  test_install_integrate_antigravity_preserves_user_content
-  test_install_integrate_antigravity_empty_file_removed
-  test_install_integrate_antigravity_skipped_outside_git_repo
+  test_install_integrate_antigravity_repo_preserves_user_content
+  test_install_integrate_antigravity_repo_empty_file_removed
+  test_install_integrate_antigravity_repo_skipped_outside_git_repo
+  test_install_integrate_antigravity_global_writes_to_home_gemini
+  test_install_integrate_antigravity_global_preserves_existing_gemini_md
+  test_install_integrate_copilot_cli_writes_to_home_copilot
+  test_install_integrate_copilot_cli_preserves_existing_instructions
   test_install_integrate_zed_preserves_user_content
   test_install_integrate_zed_empty_file_removed
   test_install_integrate_zed_skipped_outside_git_repo
   test_install_integrate_refuses_symlinked_dotgit
   test_install_integrate_refuses_symlinked_target
+  test_install_integrate_global_refuses_symlinked_target
+  test_install_integrate_global_refuses_symlinked_parent_dir
   test_install_uninstall_preserves_attacker_planted_marker_pair
-  test_install_integrate_all_includes_antigravity_and_zed
+  test_install_uninstall_global_preserves_attacker_planted_marker
+  test_install_integrate_all_includes_global_and_per_repo
   test_installer_idempotent_and_uninstall
   test_installer_rc_block_idempotent_and_stripped
 )

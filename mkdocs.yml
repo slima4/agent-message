@@ -31,7 +31,8 @@ nav:
   - Integrations:
     - Overview: integrations/index.md
     - Cursor: integrations/cursor.md
-    - GitHub Copilot: integrations/copilot.md
+    - GitHub Copilot Chat: integrations/copilot.md
+    - GitHub Copilot CLI: integrations/copilot-cli.md
     - Google Antigravity: integrations/antigravity.md
     - Zed: integrations/zed.md
     - opencode: integrations/opencode.md

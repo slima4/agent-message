@@ -1,22 +1,28 @@
 # Google Antigravity
 
-Per-repo. Antigravity reads `AGENTS.md` (cross-tool standard, also picked up by newer Cursor and Claude Code) — `GEMINI.md` takes precedence in Antigravity if both exist.
+Antigravity reads `AGENTS.md` from two paths: `~/.gemini/AGENTS.md` (global, also read by Gemini CLI) and `./AGENTS.md` at the repo root (cross-tool — newer Cursor and Claude Code read it too). `GEMINI.md` takes precedence in Antigravity if both exist.
 
-## Auto-integrate (recommended)
-
-From inside the target repo (must contain `.git/`):
+## Auto-integrate (recommended) — global
 
 ```bash
 ./install.sh --integrate=antigravity
 ```
 
-Appends a marker block to `AGENTS.md` at repo root. Idempotent: re-runs don't duplicate. Existing user content preserved.
+Appends a marker block to `~/.gemini/AGENTS.md`. **One install, every repo covered.** Idempotent: re-runs don't duplicate. Existing user content preserved.
 
-If run from a non-git directory, the integration is skipped with a notice — prevents accidentally creating `~/AGENTS.md` if you forgot to `cd` into the repo.
+## Per-repo opt-in
+
+If you'd rather scope the instructions to a single repo (e.g., for shared/team rules versioned with the project):
+
+```bash
+./install.sh --integrate=antigravity-repo
+```
+
+Appends to `./AGENTS.md` at the cwd repo root. Same marker pattern. Requires cwd to be a real git repo.
 
 ## Manual
 
-Append to `AGENTS.md` at repo root (create if missing):
+Append to `~/.gemini/AGENTS.md` (global) or `./AGENTS.md` (per-repo) — create if missing:
 
 ```markdown
 <!-- >>> agent-message >>> -->
@@ -43,18 +49,17 @@ Agent should run `~/.agent-message-cmd inbox`.
 
 ## Uninstall
 
-From inside the repo:
-
 ```bash
-./install.sh --integrate=antigravity --uninstall
+./install.sh --integrate=antigravity --uninstall          # strips ~/.gemini/AGENTS.md
+./install.sh --integrate=antigravity-repo --uninstall     # strips ./AGENTS.md (run from inside the repo)
 ```
 
-Strips the marker block. Other content in `AGENTS.md` preserved. Empty file deleted.
+Strips the marker block. Other content preserved. Empty file deleted.
 
-**Note:** the full `./install.sh --uninstall` does NOT auto-strip per-repo antigravity integrations — that would require knowing every repo where you ran `--integrate=antigravity`. Run the partial uninstall from each repo.
+**Note:** the full `./install.sh --uninstall` strips the global `~/.gemini/AGENTS.md` block automatically. Per-repo `antigravity-repo` integrations require running `--uninstall --integrate=antigravity-repo` from each repo.
 
 ## Caveats
 
 - **`AGENTS.md` is a cross-tool convention.** Tools that read it: Antigravity (since v1.20.3, March 2026), newer Cursor, Claude Code. The same marker block feeds all of them — no separate flags needed.
 - **`GEMINI.md` overrides `AGENTS.md`** in Antigravity. If you maintain a `GEMINI.md` with conflicting agent guidance, the SAMP block in `AGENTS.md` may be ignored.
-- Per-repo only by design. For global Antigravity rules, hand-copy the block into `~/.gemini/AGENTS.md`.
+- **Global vs per-repo precedence.** Antigravity reads both — global covers all repos by default, per-repo can override or extend. Pick one or run both.

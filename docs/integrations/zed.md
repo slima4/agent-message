@@ -55,6 +55,6 @@ Strips the marker block. Other content in `.rules` preserved. Empty file deleted
 
 ## Caveats
 
-- **`.rules` is Zed's primary**, but Zed falls back to `.cursorrules`, `CLAUDE.md`, `AGENTS.md` if `.rules` is absent. If you'd rather feed Zed via the `AGENTS.md` cross-tool standard, use `--integrate=antigravity` instead and skip `--integrate=zed`.
+- **`.rules` is Zed's primary**, but Zed falls back to `.cursorrules`, `.windsurfrules`, `CLAUDE.md`, `AGENTS.md` if `.rules` is absent. If you'd rather feed Zed via the `AGENTS.md` cross-tool standard, use `--integrate=antigravity-repo` instead and skip `--integrate=zed`.
 - Zed currently does not let you replace the system prompt — only append. The marker block is appended as user-rules context, which is enough for the agent to call `~/.agent-message-cmd` on request.
-- Per-repo only by design. For project-wide rules, set them via Zed's Rules Library in the agent panel.
+- **Per-repo only.** Zed's global Rules Library lives in an LMDB database (`~/.config/zed/prompts/prompts-library-db.0.mdb`) — a binary store edited via the Rules Library UI. Not safely scriptable. Either run `--integrate=zed` per-repo, or paste the marker block into a rule via the UI once and set it as default.
