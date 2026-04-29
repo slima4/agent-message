@@ -27,4 +27,12 @@ Open a PR against this file. Include:
 
 Conformance bar: must satisfy [§9 Conformance](https://github.com/slima4/agent-message/blob/main/SPEC.md#9-conformance) of the spec — schema (§2), `id` computation (§3), alias regex (§1), single-writer-per-log-file (§5), dedup-by-`id` and filter-by-`to` on read (§6).
 
-No formal certification. Self-declared conformance + working interop with the reference implementation is the test. Run [`test.sh`](https://github.com/slima4/agent-message/blob/main/test.sh) against your impl's `$DIR` if helpful.
+No formal certification. Self-declared conformance + working interop with the reference implementation is the test.
+
+Writer-side check: run [`samp-validate`](https://github.com/slima4/agent-message/blob/main/samp-validate) against your impl's `$DIR`:
+
+```bash
+./samp-validate /path/to/your/dir
+```
+
+It walks every `log-*.jsonl`, asserts schema, `id` computation, alias regex, and single-writer-per-file; exits non-zero on any violation. Reader-side rules (§6) can't be checked from logs alone — exercise via interop with the reference implementation.

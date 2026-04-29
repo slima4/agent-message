@@ -6,6 +6,7 @@ set -u
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WRAPPER="$SCRIPT_DIR/bin/agent-message-cmd"
 SHELL_HELPER="$SCRIPT_DIR/shell/msg.sh"
+VALIDATOR="$SCRIPT_DIR/samp-validate"
 
 PASS=0
 FAIL=0
@@ -161,6 +162,62 @@ test_msg_mtime_short_circuit() {
   assert_contains "$out" "no new messages" "mtime short-circuit"
 }
 
+# ---- version + validator tests ----
+
+test_wrapper_version() {
+  local out; out=$("$WRAPPER" --version)
+  assert_contains "$out" "agent-message" "wrapper --version mentions name" || return 1
+  assert_contains "$out" "SAMP v1" "wrapper --version mentions spec"
+}
+
+test_msg_version() {
+  # shellcheck source=shell/msg.sh
+  local out; out=$( source "$SHELL_HELPER"; msg --version )
+  assert_contains "$out" "msg" "msg --version mentions name" || return 1
+  assert_contains "$out" "SAMP v1" "msg --version mentions spec"
+}
+
+test_validator_clean() {
+  ( cd "$TMP/foo" && echo "hi" | "$WRAPPER" send bar ) >/dev/null
+  ( cd "$TMP/bar" && echo "yo" | "$WRAPPER" reply ) >/dev/null
+  local out; out=$("$VALIDATOR" "$AGENT_MESSAGE_DIR" 2>&1)
+  assert_contains "$out" "OK:" "validator passes on round-trip"
+}
+
+test_validator_catches_id_tamper() {
+  ( cd "$TMP/foo" && echo "hi" | "$WRAPPER" send bar ) >/dev/null
+  python3 - "$AGENT_MESSAGE_DIR/log-foo.jsonl" <<'PY'
+import json, sys
+p = sys.argv[1]
+lines = open(p).readlines()
+rec = json.loads(lines[0])
+rec["id"] = "0000000000000000"
+lines[0] = json.dumps(rec) + "\n"
+open(p, "w").writelines(lines)
+PY
+  local rc; "$VALIDATOR" "$AGENT_MESSAGE_DIR" >/dev/null 2>&1; rc=$?
+  assert_eq "1" "$rc" "validator exits 1 on tampered id"
+}
+
+test_validator_catches_single_writer_violation() {
+  ( cd "$TMP/foo" && echo "hi" | "$WRAPPER" send bar ) >/dev/null
+  python3 - "$AGENT_MESSAGE_DIR/log-foo.jsonl" <<'PY'
+import json, sys
+p = sys.argv[1]
+lines = open(p).readlines()
+rec = json.loads(lines[0])
+rec["from"] = "evil"
+# Reset id to match new content so we test single-writer, not id mismatch.
+import hashlib
+core = {k: rec[k] for k in ("ts","from","to","thread","body")}
+rec["id"] = hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
+lines[0] = json.dumps(rec) + "\n"
+open(p, "w").writelines(lines)
+PY
+  local out; out=$("$VALIDATOR" "$AGENT_MESSAGE_DIR" 2>&1) || true
+  assert_contains "$out" "single-writer" "validator catches single-writer violation"
+}
+
 # ---- installer tests ----
 
 test_installer_idempotent_and_uninstall() {
@@ -228,6 +285,11 @@ TESTS=(
   test_wrapper_id_is_content_addressed
   test_msg_round_trip
   test_msg_mtime_short_circuit
+  test_wrapper_version
+  test_msg_version
+  test_validator_clean
+  test_validator_catches_id_tamper
+  test_validator_catches_single_writer_violation
   test_installer_idempotent_and_uninstall
   test_installer_rc_block_idempotent_and_stripped
 )

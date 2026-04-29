@@ -329,6 +329,9 @@ extra = f", filled id on {added_ids} legacy record(s)" if added_ids else ""
 print(f"compacted: {before} → {after} records ({touched} file(s) rewritten{extra})")
 PY
       ;;
+    --version|-V|version)
+      echo "msg 1.0.0 (SAMP v1)"
+      ;;
     help|-h|--help)
       cat <<EOF
 msg — agent-message shell helper
@@ -348,6 +351,7 @@ Plumbing:
   msg compact              within-file dedup; ensures id populated
 
   msg help
+  msg --version
 
 dir:    \${AGENT_MESSAGE_DIR:-\${XDG_STATE_HOME:-\$HOME/.local/state}/agent-message}
 files:  \$DIR/log-<alias>.jsonl  (single-writer, union on read)

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""SAMP v1 conformance validator.
+
+Walks a SAMP message store and asserts §9 conformance:
+  §1 alias regex      — log filename and from/to fields
+  §2 schema           — id, ts, from, to, thread, body present and well-typed
+  §3 id computation   — sha256(canonical_json({ts,from,to,thread,body}))[:16]
+  §5 single-writer    — every record in log-<X>.jsonl has from == X
+
+Reader-side rules (§6) cannot be checked from logs alone — exercise via
+interop with the reference implementation.
+
+Usage:
+  samp-validate [path]
+
+Default path: $AGENT_MESSAGE_DIR or ${XDG_STATE_HOME:-$HOME/.local/state}/agent-message
+
+Exit code: 0 on conformance, 1 on violations, 2 on usage error.
+"""
+
+import hashlib, json, os, re, sys
+from pathlib import Path
+
+__version__ = "1.0.0"
+
+ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+LOG_RE = re.compile(r"^log-(.+)\.jsonl$")
+ID_RE = re.compile(r"^[0-9a-f]{16}$")
+REQUIRED = ("id", "ts", "from", "to", "thread", "body")
+
+
+def default_dir():
+    if env := os.environ.get("AGENT_MESSAGE_DIR"):
+        return Path(env)
+    state = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(state) / "agent-message"
+
+
+def cid(rec):
+    c = {k: rec[k] for k in ("ts", "from", "to", "thread", "body") if k in rec}
+    return hashlib.sha256(
+        json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:16]
+
+
+def validate_record(rec, file_alias, lf, line_no, violations):
+    here = f"{lf.name}:{line_no}"
+    for k in REQUIRED:
+        if k not in rec:
+            violations.append(f"{here}: missing field {k!r}")
+
+    rid = rec.get("id")
+    if rid is not None:
+        if not (isinstance(rid, str) and ID_RE.match(rid)):
+            violations.append(f"{here}: id must be 16 hex chars, got {rid!r}")
+        elif all(k in rec for k in ("ts", "from", "to", "thread", "body")):
+            expected = cid(rec)
+            if rid != expected:
+                violations.append(f"{here}: id mismatch (expected {expected}, got {rid})")
+
+    ts = rec.get("ts")
+    if ts is not None and not (isinstance(ts, int) and not isinstance(ts, bool) and ts >= 0):
+        violations.append(f"{here}: ts must be non-negative int, got {ts!r}")
+
+    for k in ("from", "to"):
+        v = rec.get(k)
+        if v is None:
+            continue
+        if not isinstance(v, str) or not ALIAS_RE.match(v):
+            violations.append(f"{here}: {k}={v!r} fails §1 alias regex")
+
+    for k in ("thread", "body"):
+        v = rec.get(k)
+        if v is not None and not isinstance(v, str):
+            violations.append(f"{here}: {k} must be string, got {type(v).__name__}")
+
+    frm = rec.get("from")
+    if frm is not None and frm != file_alias:
+        violations.append(
+            f"{here}: from={frm!r} violates §5 single-writer (file is log-{file_alias}.jsonl)"
+        )
+
+
+def main():
+    if len(sys.argv) >= 2 and sys.argv[1] in ("--version", "-V"):
+        print(f"samp-validate {__version__} (SAMP v1)")
+        return 0
+    if len(sys.argv) >= 2 and sys.argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+
+    d = Path(sys.argv[1]) if len(sys.argv) > 1 else default_dir()
+    if not d.is_dir():
+        print(f"not a directory: {d}", file=sys.stderr)
+        return 2
+
+    violations = []
+    files = 0
+    records = 0
+
+    for lf in sorted(d.glob("log-*.jsonl")):
+        files += 1
+        m = LOG_RE.match(lf.name)
+        if not m:
+            violations.append(f"{lf.name}:0: filename does not match log-<alias>.jsonl")
+            continue
+        file_alias = m.group(1)
+        if not ALIAS_RE.match(file_alias):
+            violations.append(f"{lf.name}:0: alias {file_alias!r} fails §1 regex")
+
+        try:
+            with open(lf) as f:
+                for line_no, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    records += 1
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError as e:
+                        violations.append(f"{lf.name}:{line_no}: invalid JSON ({e.msg})")
+                        continue
+                    if not isinstance(rec, dict):
+                        violations.append(f"{lf.name}:{line_no}: record must be object")
+                        continue
+                    validate_record(rec, file_alias, lf, line_no, violations)
+        except OSError as e:
+            violations.append(f"{lf.name}:0: read error: {e}")
+
+    if violations:
+        for v in violations:
+            print(v)
+        print(
+            f"\n{len(violations)} violation(s) across {records} record(s) in {files} file(s)",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"OK: {records} record(s) across {files} file(s) conform to SAMP v1")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

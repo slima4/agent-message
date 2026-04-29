@@ -2,6 +2,8 @@
 import hashlib, json, os, re, sys, time
 from pathlib import Path
 
+__version__ = "1.0.0"
+
 ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -67,6 +69,8 @@ def write(d, frm, to, thread, body):
 
 def send(args):
     if not args: sys.exit("usage: send <to>")
+    if sys.stdin.isatty():
+        sys.exit("send: pipe body via stdin, e.g. echo 'hi' | agent-message-cmd send <to>")
     to = args[0]
     body = sys.stdin.read().rstrip("\n")
     frm = me()
@@ -77,6 +81,8 @@ def send(args):
 
 def reply(args):
     who = me()
+    if sys.stdin.isatty():
+        sys.exit("reply: pipe body via stdin, e.g. echo 'lgtm' | agent-message-cmd reply")
     body = sys.stdin.read().rstrip("\n")
     d = D()
     mine = [m for _, m in iter_to(d, who)]
@@ -127,6 +133,9 @@ def inbox(args):
 OPS = {"send": send, "inbox": inbox, "reply": reply}
 
 if __name__ == "__main__":
+    if len(sys.argv) >= 2 and sys.argv[1] in ("--version", "-V"):
+        print(f"agent-message {__version__} (SAMP v1)")
+        sys.exit(0)
     if len(sys.argv) < 2 or sys.argv[1] not in OPS:
-        sys.exit(f"usage: {Path(sys.argv[0]).name} {{{'|'.join(OPS)}}} [args]")
+        sys.exit(f"usage: {Path(sys.argv[0]).name} {{{'|'.join(OPS)}}} [args]  (--version)")
     OPS[sys.argv[1]](sys.argv[2:])
