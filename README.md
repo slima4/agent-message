@@ -4,19 +4,11 @@
 
 **Cheap, fast messaging between AI agents.** File-based — no server, no MCP, no daemon. Reference impl of [SAMP](SPEC.md) ([implementations](IMPLEMENTATIONS.md)).
 
-- **Why:** ~1 shell call per send (low Claude tokens). **0 LLM tokens** from terminal — `msg` never touches a model. Per-writer logs sync conflict-free across machines.
+- **Why:** ~1 shell call per send (low Claude tokens) — no MCP handshake, no polling hook, no ack roundtrip. **0 LLM tokens** from terminal — `msg` never touches a model. Per-writer logs sync conflict-free across machines.
 - **Install:** `git clone https://github.com/slima4/agent-message && cd agent-message && ./install.sh`
 - **Demo:** sender runs `msg send bar "ping"`; recipient (in `bar/`) runs `msg`; message appears. Done.
 
 Any agent CLI, framework, or shell process that can append a JSON line to a file can participate. Claude Code is the first client; the protocol is vendor-neutral.
-
-## Goal
-
-Make agent-to-agent communication as **cheap** and **fast** as possible:
-
-- **Cheap for the agent**: ~1 shell call per send/receive. No MCP handshake, no polling hook, no ack roundtrip. Aggressively-shrunk slash-command prompts to minimize per-invocation input tokens.
-- **Cheap for humans**: the `msg` shell function hits the logs directly. **0 LLM tokens**. The model is never in the loop.
-- **Fast**: local file append + read. No network, no server to wake up. `mtime` short-circuit skips parsing entirely when nothing changed. Latency is dominated by `python3` startup (~30ms).
 
 ## Example dialog
 
@@ -48,7 +40,7 @@ Linus built git to be fast and cheap. A few of his ideas apply here:
 
 - **Per-agent append-only logs** (one file per writer: `log-<alias>.jsonl`). Single-writer per file → zero risk of interleaved lines, zero locking needed. Readers union across all `log-*.jsonl` files. This makes **distributed sync actually work** — Syncthing / Dropbox / iCloud can never produce conflicts because each writer owns its own file.
 - **Content-addressed IDs**. Every message gets `id = sha256(ts|from|to|thread|body)[:16]`. Readers dedup by id — if the same record lands via sync in two different log files, you see it once.
-- **`mtime` short-circuit** — before parsing anything, `msg` stats the log files and compares against a cached `(max_mtime, file_count)` per reader. If nothing observably changed, print "no new messages" and exit immediately.
+- **`mtime` short-circuit** (shell `msg` only — wrapper skips it since Claude doesn't poll) — before parsing anything, `msg` stats the log files and compares against a cached `(max_mtime, file_count)` per reader. If nothing observably changed, print "no new messages" and exit. Latency floors at `python3` startup (~30ms).
 
 Plumbing (scriptable): `msg cat <id|prefix>`, `msg log [alias]`, `msg raw [all]`, `msg compact`. Candidates and declined items in [ROADMAP.md](ROADMAP.md).
 
@@ -176,13 +168,13 @@ Removes the three slash commands, the wrapper at `~/.agent-message-cmd`, the she
 ## Limits
 
 - **No auth.** Anyone on the local machine who can read the message dir can read all messages. Don't put secrets here.
-- **No locking, but no interleave either.** Single-writer-per-file means two concurrent `msg send`s from the same repo could still race on the append; `echo >>` on macOS/Linux is atomic for lines under `PIPE_BUF` (4KB), so it's fine for normal messages but don't dump megabytes.
+- **No locking, but no interleave either.** Each alias writes to its own log file. With one writer per file, two appends never race — no locking needed and writes never interleave, regardless of size.
 - **No notifications.** You pull inbox with `/message-inbox` or `msg`. For a tail-on-arrival feel, run `msg tail` in a spare terminal. New writer files appearing mid-tail aren't picked up — Ctrl-C and re-run.
 - **Single machine, or sync via files.** If you want this across machines, sync the message dir (default `~/.local/state/agent-message/`) with Syncthing / Dropbox / iCloud Drive. Per-agent logs make this conflict-free; content-addressed `id` makes it dedup-safe. Two caveats: aliases must be unique per host (don't run alias `claude` on both your laptop and desktop with the same `$DIR` — that's two writers on one file), and exclude `.seen-*` / `.mtime-*` from sync (Syncthing `.stignore`, etc.) — they're local reader state.
 
 ## Docs
 
-Live: <https://slima4.github.io/agent-message/>. Sources in [`docs/`](docs/) — install, use, design, [SAMP spec](SPEC.md), limits. Build locally with `pip install -r requirements-docs.txt && mkdocs serve`.
+Live: <https://slima4.github.io/agent-message/>. Sources in [`docs/`](docs/) — install, use, design, [SAMP spec](SPEC.md), [implementations](IMPLEMENTATIONS.md), limits. Build locally with `pip install -r requirements-docs.txt && mkdocs serve`.
 
 ## Contributing
 
