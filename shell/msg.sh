@@ -32,6 +32,9 @@ msg() {
     me=${me%$'\r'}
   fi
   [ -z "$me" ] && me=${PWD##*/}
+  # §1 alias regex enforcement (must match Python wrapper's _ok())
+  case "$me" in ''|*[!A-Za-z0-9._-]*|[!A-Za-z0-9]*) me="unknown" ;; esac
+  [ ${#me} -gt 64 ] && me="unknown"
   mkdir -p "$dir" 2>/dev/null
   local cmd="${1:-new}"
   shift 2>/dev/null || true
@@ -40,13 +43,13 @@ msg() {
       if [ $# -lt 2 ]; then echo "usage: msg send <to> <body...>" >&2; return 2; fi
       local to="$1"; shift
       MSG_ME="$me" MSG_TO="$to" MSG_BODY="$*" MSG_DIR="$dir" python3 - <<'PY'
-import json, os, time, re, datetime, hashlib
+import json, os, time, re, datetime, hashlib, unicodedata
 from pathlib import Path
 me=os.environ["MSG_ME"]; to=os.environ["MSG_TO"]
-body=os.environ["MSG_BODY"]; d=Path(os.environ["MSG_DIR"])
+body=unicodedata.normalize("NFC", os.environ["MSG_BODY"]); d=Path(os.environ["MSG_DIR"])
 m=re.match(r"\s*\[thread:([^\]]+)\]\s*", body)
 if m:
-    thread=m.group(1); body=body[m.end():]
+    thread=m.group(1).strip(); body=body[m.end():]
 else:
     first=body.splitlines()[0] if body else ""
     slug=re.sub(r"[^a-z0-9]+", "-", first.lower()).strip("-")[:40] or "msg"
@@ -55,7 +58,8 @@ ts=int(time.time())
 core={"ts":ts,"from":me,"to":to,"thread":thread,"body":body}
 mid=hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 rec={"id":mid, **core}
-with open(d/f"log-{me}.jsonl", "a") as f:
+fd=os.open(d/f"log-{me}.jsonl", os.O_WRONLY|os.O_APPEND|os.O_CREAT|os.O_NOFOLLOW, 0o644)
+with os.fdopen(fd, "a") as f:
     f.write(json.dumps(rec, ensure_ascii=False)+"\n")
 print(f"sent {me}→{to} thread={thread} id={mid}")
 PY
@@ -63,17 +67,20 @@ PY
     reply)
       if [ $# -lt 1 ]; then echo "usage: msg reply <body...>" >&2; return 2; fi
       MSG_ME="$me" MSG_BODY="$*" MSG_DIR="$dir" python3 - <<'PY'
-import json, os, sys, time, hashlib
+import json, os, sys, time, hashlib, unicodedata
 from pathlib import Path
-me=os.environ["MSG_ME"]; body=os.environ["MSG_BODY"]; d=Path(os.environ["MSG_DIR"])
+me=os.environ["MSG_ME"]; body=unicodedata.normalize("NFC", os.environ["MSG_BODY"]); d=Path(os.environ["MSG_DIR"])
 mine=[]
 for lf in sorted(d.glob("log-*.jsonl")):
+    if lf.is_symlink(): continue
+    file_alias=lf.name[4:-6]
     with open(lf) as f:
         for line in f:
             line=line.strip()
             if not line: continue
             try: m=json.loads(line)
             except json.JSONDecodeError: continue
+            if m.get("from")!=file_alias: continue
             if m.get("to")==me: mine.append(m)
 if not mine: sys.exit("no inbox messages")
 mine.sort(key=lambda m: m.get("ts",0))
@@ -82,7 +89,8 @@ ts=int(time.time())
 core={"ts":ts,"from":me,"to":last["from"],"thread":last["thread"],"body":body}
 mid=hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 rec={"id":mid, **core}
-with open(d/f"log-{me}.jsonl", "a") as f:
+fd=os.open(d/f"log-{me}.jsonl", os.O_WRONLY|os.O_APPEND|os.O_CREAT|os.O_NOFOLLOW, 0o644)
+with os.fdopen(fd, "a") as f:
     f.write(json.dumps(rec, ensure_ascii=False)+"\n")
 print(f"reply {me}→{last['from']} thread={last['thread']} id={mid}")
 PY
@@ -91,22 +99,25 @@ PY
       local mode=new
       [ "$cmd" = all ] && mode=all
       MSG_ME="$me" MSG_DIR="$dir" MSG_MODE="$mode" python3 - <<'PY'
-import json, os, time, hashlib
+import json, os, time, hashlib, unicodedata
 from pathlib import Path
 me=os.environ["MSG_ME"]; d=Path(os.environ["MSG_DIR"]); mode=os.environ["MSG_MODE"]
-log_paths=sorted(d.glob("log-*.jsonl"))
+log_paths=[p for p in sorted(d.glob("log-*.jsonl")) if not p.is_symlink()]
+def aw(p, s):
+    t=p.with_suffix(".tmp"); t.write_text(s); os.replace(str(t), str(p))
 # mtime short-circuit — skip parse entirely if nothing observable changed.
 mtime_file=d/f".mtime-{me}"
+seen_file=d/f".seen-{me}"
 cur_max=max((p.stat().st_mtime for p in log_paths), default=0.0)
 cur_count=len(log_paths)
-if mode=="new" and mtime_file.exists():
+# Only short-circuit if seen_file also exists; otherwise user may have deleted it to force re-read.
+if mode=="new" and mtime_file.exists() and seen_file.exists():
     try:
         c=json.loads(mtime_file.read_text())
         if c.get("max_mtime",0) >= cur_max and c.get("files",0) == cur_count:
             print("no new messages"); raise SystemExit
     except json.JSONDecodeError:
         pass
-seen_file=d/f".seen-{me}"
 since=0; since_ids=set()
 if mode=="new" and seen_file.exists():
     try:
@@ -116,16 +127,19 @@ if mode=="new" and seen_file.exists():
         pass
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
+    if "body" in c: c["body"]=unicodedata.normalize("NFC", c["body"])
     return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 seen_ids=set()
 msgs=[]
 for lf in log_paths:
+    file_alias=lf.name[4:-6]
     with open(lf) as f:
         for line in f:
             line=line.strip()
             if not line: continue
             try: m=json.loads(line)
             except json.JSONDecodeError: continue
+            if m.get("from")!=file_alias: continue
             if m.get("to")!=me: continue
             mid=m.get("id") or cid(m)
             if mid in seen_ids: continue
@@ -140,7 +154,7 @@ msgs.sort(key=lambda m: m.get("ts",0))
 if not msgs:
     print("no new messages" if mode=="new" else "no messages")
     if mode=="new":
-        mtime_file.write_text(json.dumps({"max_mtime":cur_max,"files":cur_count}))
+        aw(mtime_file, json.dumps({"max_mtime":cur_max,"files":cur_count}))
     raise SystemExit
 for m in msgs:
     ts=time.strftime("%m-%d %H:%M", time.localtime(m.get("ts",0)))
@@ -154,18 +168,21 @@ if mode=="new":
     new_ids=[m["_id"] for m in msgs if m.get("ts",0)==new_max]
     if new_max==since:
         new_ids=sorted(since_ids | set(new_ids))
-    seen_file.write_text(json.dumps({"ts":new_max,"ids":list(new_ids)}))
-    mtime_file.write_text(json.dumps({"max_mtime":cur_max,"files":cur_count}))
+    aw(seen_file, json.dumps({"ts":new_max,"ids":list(new_ids)}))
+    aw(mtime_file, json.dumps({"max_mtime":cur_max,"files":cur_count}))
 PY
       ;;
     tail)
-      local logs=( "$dir"/log-*.jsonl )
-      if [ ! -e "${logs[0]}" ]; then
+      local logs=() f
+      for f in "$dir"/log-*.jsonl; do
+        [ -f "$f" ] && [ ! -L "$f" ] && logs+=("$f")
+      done
+      if [ ${#logs[@]} -eq 0 ]; then
         echo "no logs in $dir yet -- nothing to follow" >&2
         return 1
       fi
       # python3 -c keeps stdin free for the pipe from tail (heredoc would shadow it).
-      tail -n0 -F "$dir"/log-*.jsonl 2>/dev/null | MSG_ME="$me" python3 -u -c '
+      tail -n0 -F "${logs[@]}" 2>/dev/null | MSG_ME="$me" python3 -u -c '
 import json, os, sys, time
 me=os.environ["MSG_ME"]
 for line in sys.stdin:
@@ -185,7 +202,7 @@ for line in sys.stdin:
     cat)
       if [ $# -lt 1 ]; then echo "usage: msg cat <id|prefix>" >&2; return 2; fi
       MSG_ID="$1" MSG_DIR="$dir" python3 - <<'PY'
-import json, os, sys, hashlib
+import json, os, sys, hashlib, unicodedata
 from pathlib import Path
 d=Path(os.environ["MSG_DIR"]); needle=os.environ["MSG_ID"]
 # 4-char min prevents trivial prefixes returning near-everything; full id is 16.
@@ -193,15 +210,19 @@ if len(needle) < 4:
     sys.exit("id prefix must be at least 4 chars")
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
+    if "body" in c: c["body"]=unicodedata.normalize("NFC", c["body"])
     return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 hits=[]; seen=set()
 for lf in sorted(d.glob("log-*.jsonl")):
+    if lf.is_symlink(): continue
+    file_alias=lf.name[4:-6]
     with open(lf) as f:
         for ln in f:
             ln=ln.strip()
             if not ln: continue
             try: m=json.loads(ln)
             except json.JSONDecodeError: continue
+            if m.get("from")!=file_alias: continue
             i=m.get("id") or cid(m)
             if i in seen: continue
             seen.add(i)
@@ -224,20 +245,24 @@ PY
     log)
       local who="${1:-$me}"
       MSG_WHO="$who" MSG_DIR="$dir" python3 - <<'PY'
-import json, os, time, hashlib
+import json, os, time, hashlib, unicodedata
 from pathlib import Path
 d=Path(os.environ["MSG_DIR"]); who=os.environ["MSG_WHO"]
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
+    if "body" in c: c["body"]=unicodedata.normalize("NFC", c["body"])
     return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 seen=set(); msgs=[]
 for lf in sorted(d.glob("log-*.jsonl")):
+    if lf.is_symlink(): continue
+    file_alias=lf.name[4:-6]
     with open(lf) as f:
         for ln in f:
             ln=ln.strip()
             if not ln: continue
             try: m=json.loads(ln)
             except json.JSONDecodeError: continue
+            if m.get("from")!=file_alias: continue
             i=m.get("id") or cid(m)
             if i in seen: continue
             seen.add(i)
@@ -264,20 +289,24 @@ PY
         fi
       fi
       MSG_ME="$me" MSG_ONLY_ME="$only_me" MSG_DIR="$dir" python3 - <<'PY'
-import json, os, hashlib
+import json, os, hashlib, unicodedata
 from pathlib import Path
 d=Path(os.environ["MSG_DIR"]); me=os.environ["MSG_ME"]; only_me=os.environ["MSG_ONLY_ME"]=="1"
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
+    if "body" in c: c["body"]=unicodedata.normalize("NFC", c["body"])
     return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 seen=set()
 for lf in sorted(d.glob("log-*.jsonl")):
+    if lf.is_symlink(): continue
+    file_alias=lf.name[4:-6]
     with open(lf) as f:
         for ln in f:
             ln=ln.strip()
             if not ln: continue
             try: m=json.loads(ln)
             except json.JSONDecodeError: continue
+            if m.get("from")!=file_alias: continue
             i=m.get("id") or cid(m)
             if i in seen: continue
             seen.add(i)
@@ -287,14 +316,16 @@ PY
       ;;
     compact)
       MSG_DIR="$dir" python3 - <<'PY'
-import json, os, hashlib, shutil, tempfile
+import json, os, hashlib, shutil, tempfile, unicodedata
 from pathlib import Path
 d=Path(os.environ["MSG_DIR"])
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
+    if "body" in c: c["body"]=unicodedata.normalize("NFC", c["body"])
     return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 before=0; after=0; touched=0; added_ids=0
 for lf in sorted(d.glob("log-*.jsonl")):
+    if lf.is_symlink(): continue
     with open(lf) as f:
         orig=[ln.strip() for ln in f if ln.strip()]
     before += len(orig)

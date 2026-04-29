@@ -2,7 +2,7 @@
 # ruff: noqa: E401, E701, E702
 from __future__ import annotations
 
-import hashlib, json, os, re, sys, time
+import hashlib, json, os, re, sys, time, unicodedata
 from pathlib import Path
 
 __version__ = "1.0.0"
@@ -34,6 +34,7 @@ def me() -> str:
 
 def cid(m: dict) -> str:
     c = {k: m[k] for k in ("ts","from","to","thread","body") if k in m}
+    if "body" in c: c["body"] = unicodedata.normalize("NFC", c["body"])
     return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 
 
@@ -48,12 +49,15 @@ def thread_of(body: str, frm: str) -> tuple[str, str]:
 def iter_to(d: Path, who: str):
     seen = set()
     for lf in sorted(d.glob("log-*.jsonl")):
+        if lf.is_symlink(): continue
+        file_alias = lf.name[4:-6]
         with open(lf) as f:
             for ln in f:
                 ln = ln.strip()
                 if not ln: continue
                 try: m = json.loads(ln)
                 except json.JSONDecodeError: continue
+                if m.get("from") != file_alias: continue
                 if m.get("to") != who: continue
                 i = m.get("id") or cid(m)
                 if i in seen: continue
@@ -62,10 +66,12 @@ def iter_to(d: Path, who: str):
 
 
 def write(d: Path, frm: str, to: str, thread: str, body: str) -> dict:
+    body = unicodedata.normalize("NFC", body)
     rec = {"ts": int(time.time()), "from": frm, "to": to, "thread": thread, "body": body}
     rec = {"id": cid(rec), **rec}
     d.mkdir(parents=True, exist_ok=True)
-    with open(d/f"log-{frm}.jsonl", "a") as f:
+    fd = os.open(d/f"log-{frm}.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "a") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return rec
 
@@ -128,7 +134,9 @@ def inbox(args: list[str]) -> None:
         nm = max(m.get("ts", 0) for _, m in out)
         nids = [i for i, m in out if m.get("ts", 0) == nm]
         if nm == since: nids = sorted(since_ids | set(nids))
-        sf.write_text(json.dumps({"ts": nm, "ids": list(nids)}))
+        tmp = sf.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"ts": nm, "ids": list(nids)}))
+        os.replace(str(tmp), str(sf))
     senders = sorted({m["from"] for _, m in out})
     print(f"{len(out)} new from: {', '.join(senders)}")
 

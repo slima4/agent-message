@@ -219,6 +219,86 @@ PY
   assert_contains "$out" "single-writer" "validator catches single-writer violation"
 }
 
+# ---- security + correctness tests ----
+
+test_msg_alias_traversal_blocked() {
+  ( cd "$TMP/foo" || exit 1
+    echo "../../../tmp/PWNED-msg-$$" > .agent-message
+    # shellcheck source=shell/msg.sh
+    source "$SHELL_HELPER"
+    msg send bar "evil" ) >/dev/null 2>&1
+  assert_file_missing "/tmp/PWNED-msg-$$" || return 1
+  assert_file_missing "/tmp/PWNED-msg-$$.jsonl" || return 1
+  assert_file_exists "$AGENT_MESSAGE_DIR/log-unknown.jsonl"
+}
+
+test_wrapper_single_writer_runtime_enforced() {
+  ( cd "$TMP/foo" && echo "legit" | "$WRAPPER" send bar ) >/dev/null
+  python3 - "$AGENT_MESSAGE_DIR" <<'PY'
+import json, hashlib, time, sys, os
+d = sys.argv[1]
+ts = int(time.time())
+core = {"ts":ts,"from":"foo","to":"bar","thread":"forged","body":"FORGED"}
+i = hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
+rec = {"id":i, **core}
+with open(os.path.join(d, "log-mallory.jsonl"), "w") as f:
+    f.write(json.dumps(rec, ensure_ascii=False)+"\n")
+PY
+  local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "legit" "legit message visible" || return 1
+  if [[ "$out" == *"FORGED"* ]]; then
+    echo "  reader showed forged record from log-mallory.jsonl"
+    return 1
+  fi
+}
+
+test_wrapper_nfc_body() {
+  # NFD: 'cafe' + combining acute (\xcc\x81). Should normalize to NFC: 'café' (\xc3\xa9).
+  ( cd "$TMP/foo" && printf 'cafe\xcc\x81' | "$WRAPPER" send bar ) >/dev/null
+  python3 - "$AGENT_MESSAGE_DIR/log-foo.jsonl" <<'PY'
+import json, sys, unicodedata
+rec = json.loads(open(sys.argv[1]).readline())
+b = rec["body"]
+assert b == unicodedata.normalize("NFC", b), f"stored body not NFC: {b!r}"
+assert "é" in b, f"body lacks NFC composed é: {b!r}"
+PY
+}
+
+test_msg_thread_strip_whitespace() {
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER" && cd "$TMP/foo" && msg send bar "[thread:  spaced  ] body" ) >/dev/null
+  local thread
+  thread=$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline())["thread"])' \
+           "$AGENT_MESSAGE_DIR/log-foo.jsonl")
+  assert_eq "spaced" "$thread" "shell strips whitespace around [thread:id]"
+}
+
+test_wrapper_symlink_log_blocks_write() {
+  mkdir -p "$AGENT_MESSAGE_DIR"
+  local target="$TMP/symlink-target-$$"
+  : > "$target"
+  ln -s "$target" "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+  ( cd "$TMP/foo" && echo "evil" | "$WRAPPER" send bar ) >/dev/null 2>&1
+  local rc=$?
+  [[ $rc -ne 0 ]] || { echo "  send to symlink should have failed"; return 1; }
+  if [[ -s "$target" ]]; then
+    echo "  symlink target was written through"
+    return 1
+  fi
+}
+
+test_msg_seen_deletion_forces_reread() {
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER" && cd "$TMP/foo" && msg send bar "ping" ) >/dev/null
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER" && cd "$TMP/bar" && msg ) >/dev/null
+  rm -f "$AGENT_MESSAGE_DIR/.seen-bar"
+  local out
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER" && cd "$TMP/bar" && msg )
+  assert_contains "$out" "ping" "deleting .seen forces re-read despite mtime cache"
+}
+
 # ---- installer tests ----
 
 test_installer_idempotent_and_uninstall() {
@@ -291,6 +371,12 @@ TESTS=(
   test_validator_clean
   test_validator_catches_id_tamper
   test_validator_catches_single_writer_violation
+  test_msg_alias_traversal_blocked
+  test_wrapper_single_writer_runtime_enforced
+  test_wrapper_nfc_body
+  test_msg_thread_strip_whitespace
+  test_wrapper_symlink_log_blocks_write
+  test_msg_seen_deletion_forces_reread
   test_installer_idempotent_and_uninstall
   test_installer_rc_block_idempotent_and_stripped
 )
