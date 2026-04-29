@@ -5,10 +5,9 @@
 **Cheap, fast messaging between AI agents.** File-based — no server, no MCP, no daemon. Reference impl of [SAMP](SPEC.md) ([implementations](IMPLEMENTATIONS.md)).
 
 - **Why:** ~1 shell call per send (low Claude tokens) — no MCP handshake, no polling hook, no ack roundtrip. **0 LLM tokens** from terminal — `msg` never touches a model. Per-writer logs sync conflict-free across machines.
-- **Install:** `git clone https://github.com/slima4/agent-message && cd agent-message && ./install.sh`
+- **Works with:** Claude Code, Cursor, GitHub Copilot Chat + CLI, Google Antigravity, Zed — `--integrate=auto` wires up every tool you have installed in one shot. Vendor-neutral; any agent that can spawn a shell call can join.
+- **Install:** `git clone https://github.com/slima4/agent-message && cd agent-message && ./install.sh && ./install.sh --integrate=auto`
 - **Demo:** sender runs `msg send bar "ping"`; recipient (in `bar/`) runs `msg`; message appears. Done.
-
-Any agent CLI, framework, or shell process that can append a JSON line to a file can participate. Claude Code is the first client; the protocol is vendor-neutral.
 
 ## Example dialog
 
@@ -59,20 +58,20 @@ Installs:
 
 Idempotent — safe to re-run. Open a new terminal after first install so the shell function loads.
 
-Optional one-line integrations for other agents:
+Wire up other agents with a single flag. Global integrations install once and cover every repo; per-repo integrations target the cwd.
 
-```bash
-./install.sh --integrate=cursor            # global  ~/.cursor/rules/agent-message.mdc
-./install.sh --integrate=copilot-cli       # global  ~/.copilot/copilot-instructions.md
-./install.sh --integrate=antigravity       # global  ~/.gemini/AGENTS.md (Antigravity + Gemini CLI)
-./install.sh --integrate=copilot           # per-repo .github/copilot-instructions.md (Copilot Chat)
-./install.sh --integrate=antigravity-repo  # per-repo ./AGENTS.md (cross-tool, opt-in)
-./install.sh --integrate=zed               # per-repo ./.rules
-./install.sh --integrate=all               # global ones + per-repo copilot + zed (skips antigravity-repo)
-./install.sh --integrate=auto              # detect installed tools and integrate
-```
+| Flag | Scope | Writes |
+|---|---|---|
+| `--integrate=cursor` | global | `~/.cursor/rules/agent-message.mdc` |
+| `--integrate=copilot-cli` | global | `~/.copilot/copilot-instructions.md` |
+| `--integrate=antigravity` | global | `~/.gemini/AGENTS.md` (Antigravity + Gemini CLI) |
+| `--integrate=copilot` | per-repo | `.github/copilot-instructions.md` (Copilot Chat) |
+| `--integrate=antigravity-repo` | per-repo | `./AGENTS.md` (cross-tool, opt-in) |
+| `--integrate=zed` | per-repo | `./.rules` |
+| `--integrate=all` | mixed | every flag above except `antigravity-repo` |
+| `--integrate=auto` | mixed | detect installed tools and integrate them |
 
-See [`docs/integrations/`](docs/integrations/index.md) for per-tool guides.
+Per-tool guides: [`docs/integrations/`](docs/integrations/index.md).
 
 ## Use
 
@@ -153,9 +152,7 @@ No server. No network. No port. Works offline.
 | audit trail | the files themselves | Git-backed markdown | per-session |
 | cost | ~0 | high | medium |
 
-Pick agent-message when: you run 2–10 agent sessions (Claude Code, Cursor, Aider, scripts, mixed), message volume is low, you care about tokens more than features, you want to `cat`/`grep`/`tail -f` the logs yourself.
-
-Pick mcp_agent_mail when: you run many agents, want advisory file leases, threaded search, a web UI, and are OK with the token / setup cost.
+**Pick agent-message** when you run 2–10 agent sessions, message volume is low, you care about tokens more than features, and you want to `cat`/`grep`/`tail -f` the logs yourself. **Pick mcp_agent_mail** when you run many agents, want advisory file leases, threaded search, a web UI, and accept the token / setup cost.
 
 ## Browse and script
 
