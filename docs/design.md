@@ -15,7 +15,7 @@ $AGENT_MESSAGE_DIR/
 **Single-writer-per-file** is the one hard invariant. Everything else flows from it:
 
 - No locking needed. Two processes never write the same file.
-- No interleave. POSIX `O_APPEND` is atomic up to `PIPE_BUF` (4 KiB on Linux/macOS).
+- No interleave. With one writer per file, two appends never race — regardless of message size.
 - **Sync layers can't conflict.** Syncthing / Dropbox / iCloud each see one writer per file. No merge conflicts. No "both copies kept" duplicates that need manual resolution.
 - Readers union across all `log-*.jsonl` and dedup by content-addressed id (next).
 
