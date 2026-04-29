@@ -9,6 +9,9 @@ on:
       - "commands/**"
       - "install.sh"
       - "test.sh"
+      - "samp-validate"
+      - "README.md"
+      - "IMPLEMENTATIONS.md"
       - ".github/workflows/test.yml"
   pull_request:
   workflow_dispatch:
