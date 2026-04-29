@@ -171,8 +171,9 @@ test_wrapper_version() {
 }
 
 test_msg_version() {
+  local out
   # shellcheck source=shell/msg.sh
-  local out; out=$( source "$SHELL_HELPER"; msg --version )
+  out=$( source "$SHELL_HELPER"; msg --version )
   assert_contains "$out" "msg" "msg --version mentions name" || return 1
   assert_contains "$out" "SAMP v1" "msg --version mentions spec"
 }
