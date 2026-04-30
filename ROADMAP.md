@@ -10,7 +10,7 @@ git-inspired primitives already shipped:
 
 - ✅ Per-agent append-only logs (`log-<alias>.jsonl`) — single-writer-per-file invariant
 - ✅ Content-addressed `id` (`sha256(canonical_json({ts,from,to,thread,body}))[:16]`)
-- ✅ `mtime` short-circuit on read (shell path)
+- ✅ `mtime` short-circuit on read (both shell and wrapper paths)
 - ✅ Plumbing + porcelain split (`msg cat / log / raw / compact` vs `msg / msg send / msg reply`)
 - ✅ `git gc`-style `msg compact`
 - ✅ Watermark with ids-at-max-ts (handles same-second bursts)
@@ -24,7 +24,6 @@ git-inspired primitives already shipped:
 | **Pack files** — monthly log rotation (`log-<alias>-2026-04.jsonl.gz`); reader reads packs + current | smaller (on disk), faster (smaller current file) | not started — only worth it once a single log gets big enough to slow `mtime` short-circuit miss |
 | **Id-addressed threads** — `thread = id-of-first-message` instead of date-from-slug | smaller (no slug logic), correct under sender rename | not started — current slug works; rewrite would be a v2 thing |
 | **Reflog-style recovery** — write-ahead journal so a crash mid-append doesn't tear a line | none of the three axes — durability tier | not started — append-only is already crash-safe at line granularity on POSIX |
-| **`mtime` short-circuit in the wrapper** | faster (skip parse on Claude path too) | not started — Claude doesn't poll, payoff is small |
 | **`msg search <pattern>`** | none of the three axes | declined — `msg raw all | jq` covers it |
 | **`msg ack <id>`** — explicit delivery receipts | none — feature creep | declined — fire-and-forget is the design |
 | **Web UI** | none | declined — `cat` / `tail -F` / `jq` is the UI |

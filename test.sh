@@ -124,6 +124,22 @@ test_wrapper_thread_override() {
   assert_eq "custom-id" "$thread" "[thread:id] prefix override"
 }
 
+test_wrapper_mtime_short_circuit() {
+  ( cd "$TMP/foo" && echo "ping" | "$WRAPPER" send bar ) >/dev/null
+  ( cd "$TMP/bar" && "$WRAPPER" inbox ) >/dev/null
+  assert_file_exists "$AGENT_MESSAGE_DIR/.mtime-bar" || return 1
+  local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "no new messages" "wrapper mtime short-circuit"
+}
+
+test_wrapper_seen_deletion_forces_reread() {
+  ( cd "$TMP/foo" && echo "ping" | "$WRAPPER" send bar ) >/dev/null
+  ( cd "$TMP/bar" && "$WRAPPER" inbox ) >/dev/null
+  rm -f "$AGENT_MESSAGE_DIR/.seen-bar"
+  local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "ping" "deleting .seen forces re-read despite mtime cache"
+}
+
 test_wrapper_id_is_content_addressed() {
   ( cd "$TMP/foo" && echo "same body" | "$WRAPPER" send bar ) >/dev/null
   local id1; id1=$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline())["id"])' \
@@ -887,6 +903,8 @@ TESTS=(
   test_wrapper_thread_inheritance
   test_wrapper_thread_override
   test_wrapper_id_is_content_addressed
+  test_wrapper_mtime_short_circuit
+  test_wrapper_seen_deletion_forces_reread
   test_msg_round_trip
   test_msg_mtime_short_circuit
   test_wrapper_version

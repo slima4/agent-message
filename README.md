@@ -39,7 +39,7 @@ Linus built git to be fast and cheap. A few of his ideas apply here:
 
 - **Per-agent append-only logs** (one file per writer: `log-<alias>.jsonl`). Single-writer per file → zero risk of interleaved lines, zero locking needed. Readers union across all `log-*.jsonl` files. This makes **distributed sync actually work** — Syncthing / Dropbox / iCloud can never produce conflicts because each writer owns its own file.
 - **Content-addressed IDs**. Every message gets `id = sha256(ts|from|to|thread|body)[:16]`. Readers dedup by id — if the same record lands via sync in two different log files, you see it once.
-- **`mtime` short-circuit** (shell `msg` only — wrapper skips it since Claude doesn't poll) — before parsing anything, `msg` stats the log files and compares against a cached `(max_mtime, file_count)` per reader. If nothing observably changed, print "no new messages" and exit. Latency floors at `python3` startup (~30ms).
+- **`mtime` short-circuit** — both readers stat the log files and compare against a cached `(max_mtime, file_count)` per reader. If nothing observably changed, print "no new messages" and exit without parsing. ~5x speedup on cache hit at scale (50k records: 100ms → 20ms). Latency floors at `python3` startup (~30ms).
 
 Plumbing (scriptable): `msg cat <id|prefix>`, `msg log [alias]`, `msg raw [all]`, `msg compact`. Candidates and declined items in [ROADMAP.md](ROADMAP.md).
 

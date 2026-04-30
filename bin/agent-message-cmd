@@ -46,10 +46,19 @@ def thread_of(body: str, frm: str) -> tuple[str, str]:
     return f"{time.strftime('%Y-%m-%d', time.gmtime())}-{frm}-{slug}", body
 
 
+def _aw(p: Path, s: str) -> None:
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(s)
+    os.replace(str(tmp), str(p))
+
+
+def _logs(d: Path) -> list[Path]:
+    return [p for p in sorted(d.glob("log-*.jsonl")) if not p.is_symlink()]
+
+
 def iter_to(d: Path, who: str):
     seen = set()
-    for lf in sorted(d.glob("log-*.jsonl")):
-        if lf.is_symlink(): continue
+    for lf in _logs(d):
         file_alias = lf.name[4:-6]
         with open(lf) as f:
             for ln in f:
@@ -107,6 +116,18 @@ def inbox(args: list[str]) -> None:
     if mode not in ("default", "all", "raw"): sys.exit(f"unknown mode: {mode}")
     who = me(); d = D()
     sf = d / f".seen-{who}"
+    mf = d / f".mtime-{who}"
+    cur_max = 0.0; cur_count = 0
+    if mode == "default":
+        log_paths = [p for p in d.glob("log-*.jsonl") if not p.is_symlink()]
+        cur_max = max((p.stat().st_mtime for p in log_paths), default=0.0)
+        cur_count = len(log_paths)
+        if mf.exists() and sf.exists():
+            try:
+                c = json.loads(mf.read_text())
+                if c.get("max_mtime", 0) >= cur_max and c.get("files", 0) == cur_count:
+                    print("no new messages"); return
+            except json.JSONDecodeError: pass
     since, since_ids = 0, set()
     if mode == "default" and sf.exists():
         try:
@@ -120,7 +141,9 @@ def inbox(args: list[str]) -> None:
         out.append((i, m))
     out.sort(key=lambda x: x[1].get("ts", 0))
     if not out:
-        print("no new messages" if mode == "default" else "no messages"); return
+        print("no new messages" if mode == "default" else "no messages")
+        if mode == "default": _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count}))
+        return
     if mode == "raw":
         for _, m in out:
             print(json.dumps(m, ensure_ascii=False))
@@ -134,9 +157,8 @@ def inbox(args: list[str]) -> None:
         nm = max(m.get("ts", 0) for _, m in out)
         nids = [i for i, m in out if m.get("ts", 0) == nm]
         if nm == since: nids = sorted(since_ids | set(nids))
-        tmp = sf.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"ts": nm, "ids": list(nids)}))
-        os.replace(str(tmp), str(sf))
+        _aw(sf, json.dumps({"ts": nm, "ids": list(nids)}))
+        _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count}))
     senders = sorted({m["from"] for _, m in out})
     print(f"{len(out)} new from: {', '.join(senders)}")
 
