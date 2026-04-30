@@ -40,4 +40,4 @@ Then in Aider:
 /run ~/.agent-message-cmd --version
 ```
 
-Should print `agent-message 1.0.0 (SAMP v1)`.
+Should print `agent-message 1.1.0 (SAMP v1)`.

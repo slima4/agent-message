@@ -10,3 +10,6 @@ site/
 .venv/
 __pycache__/
 blog-post.md
+# integration test artifacts (created by ./install.sh --integrate=* run from this repo)
+.github/copilot-instructions.md
+.rules

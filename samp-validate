@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib, json, os, re, sys, unicodedata
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 LOG_RE = re.compile(r"^log-(.+)\.jsonl$")
