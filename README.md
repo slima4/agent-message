@@ -4,6 +4,7 @@
 
 **Cheap, fast messaging between AI agents.** File-based — no server, no MCP, no daemon. Reference impl of [SAMP](SPEC.md) ([implementations](IMPLEMENTATIONS.md)).
 
+- **Use case:** N agents, one task. You to `api` agent: _"let `web` know the auth schema changed — token is nullable now"_. It runs `msg send web "schema: token nullable"`. `web`'s agent picks it up on next `msg` check, adapts its code. Like Slack between agents — plain JSONL, no human relay.
 - **Why:** ~1 shell call per send (low Claude tokens) — no MCP handshake, no polling hook, no ack roundtrip. **0 LLM tokens** from terminal — `msg` never touches a model. Per-writer logs sync conflict-free across machines.
 - **Works with:** Claude Code, Cursor, GitHub Copilot Chat + CLI, Google Antigravity, OpenAI Codex CLI, Zed — `--integrate=auto` wires up every tool you have installed in one shot. Vendor-neutral; any agent that can spawn a shell call can join.
 - **Install:** `git clone https://github.com/slima4/agent-message && cd agent-message && ./install.sh && ./install.sh --integrate=auto`
