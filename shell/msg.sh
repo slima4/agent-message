@@ -361,7 +361,7 @@ print(f"compacted: {before} → {after} records ({touched} file(s) rewritten{ext
 PY
       ;;
     --version|-V|version)
-      echo "msg 1.1.0 (SAMP v1)"
+      echo "msg 1.1.1 (SAMP v1)"
       ;;
     help|-h|--help)
       cat <<EOF
