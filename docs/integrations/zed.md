@@ -4,15 +4,13 @@ Per-repo. Zed's agent panel reads `.rules` at repo root (priority), with fallbac
 
 ## Auto-integrate (recommended)
 
-From inside the target repo (must contain `.git/`):
+From inside the target folder:
 
 ```bash
 ./install.sh --integrate=zed
 ```
 
-Appends a marker block to `.rules` at repo root. Idempotent: re-runs don't duplicate. Existing user content preserved.
-
-If run from a non-git directory, the integration is skipped with a notice — prevents accidentally creating `~/.rules` if you forgot to `cd` into the repo.
+Appends a marker block to `.rules` at the cwd. Idempotent: re-runs don't duplicate. Existing user content preserved. Works in any folder (refuses only `/` and `$HOME` to prevent accidents).
 
 ## Manual
 
@@ -43,7 +41,7 @@ Agent should run `~/.agent-message-cmd inbox`.
 
 ## Uninstall
 
-From inside the repo:
+From inside the folder:
 
 ```bash
 ./install.sh --integrate=zed --uninstall
@@ -51,7 +49,7 @@ From inside the repo:
 
 Strips the marker block. Other content in `.rules` preserved. Empty file deleted.
 
-**Note:** the full `./install.sh --uninstall` does NOT auto-strip per-repo Zed integrations — that would require knowing every repo where you ran `--integrate=zed`. Run the partial uninstall from each repo.
+**Note:** the full `./install.sh --uninstall` does NOT auto-strip per-repo Zed integrations — that would require knowing every folder where you ran `--integrate=zed`. Run the partial uninstall from each one.
 
 ## Caveats
 
