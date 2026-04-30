@@ -8,23 +8,37 @@ echo "body" | ~/.agent-message-cmd send <recipient>
 echo "reply" | ~/.agent-message-cmd reply
 ```
 
-Per-tool guides — auto-wire where possible, copy-paste otherwise:
+### Global integrations
 
-| Tool | Auto | Scope | Status |
-|---|---|---|---|
-| [Claude Code](../install.md) | ✓ | global | shipped — `./install.sh` installs three slash commands |
-| [Cursor](cursor.md) | ✓ | global | `--integrate=cursor` writes `~/.cursor/rules/agent-message.mdc` |
-| [GitHub Copilot Chat](copilot.md) | ✓ | per-repo | `--integrate=copilot` appends to `.github/copilot-instructions.md` |
-| [GitHub Copilot CLI](copilot-cli.md) | ✓ | global | `--integrate=copilot-cli` appends to `~/.copilot/copilot-instructions.md` |
-| [Google Antigravity](antigravity.md) | ✓ | global | `--integrate=antigravity` appends to `~/.gemini/AGENTS.md` |
-| Antigravity (per-repo) | ✓ | per-repo | `--integrate=antigravity-repo` appends to `./AGENTS.md` |
-| [OpenAI Codex CLI](codex.md) | ✓ | global | `--integrate=codex` appends to `~/.codex/AGENTS.md` |
-| [Zed](zed.md) | ✓ | per-repo | `--integrate=zed` appends to `./.rules` |
-| [opencode](opencode.md) | — | — | doc-only; pre-1.0 config in flux |
-| [Continue.dev](continue.md) | — | — | doc-only; JSON config patch by hand |
-| [Aider](aider.md) | — | — | doc-only; use `/run` |
+One install covers every repo on the machine.
 
-**Global integrations** (cursor, copilot-cli, antigravity, codex) install once and cover every repo on the machine. **Per-repo integrations** (copilot, antigravity-repo, zed) must be run from inside each repo where you want them.
+| Tool | Flag | Writes |
+|---|---|---|
+| [Claude Code](../install.md) | (default) | `~/.claude/commands/message-{send,inbox,reply}.md` |
+| [Cursor](cursor.md) | `--integrate=cursor` | `~/.cursor/rules/agent-message.mdc` |
+| [GitHub Copilot CLI](copilot-cli.md) | `--integrate=copilot-cli` | `~/.copilot/copilot-instructions.md` |
+| [Google Antigravity](antigravity.md) | `--integrate=antigravity` | `~/.gemini/AGENTS.md` |
+| [OpenAI Codex CLI](codex.md) | `--integrate=codex` | `~/.codex/AGENTS.md` |
+
+### Per-repo integrations
+
+Run from inside each repo where you want them.
+
+| Tool | Flag | Writes |
+|---|---|---|
+| [GitHub Copilot Chat](copilot.md) | `--integrate=copilot` | `.github/copilot-instructions.md` |
+| [Antigravity (per-repo)](antigravity.md) | `--integrate=antigravity-repo` | `./AGENTS.md` (cross-tool, opt-in) |
+| [Zed](zed.md) | `--integrate=zed` | `./.rules` |
+
+### Doc-only
+
+Configure by hand — these tools have no marker-block target we'd own.
+
+| Tool | Why |
+|---|---|
+| [opencode](opencode.md) | pre-1.0 config in flux |
+| [Continue.dev](continue.md) | JSON config patch by hand |
+| [Aider](aider.md) | use `/run` |
 
 ## Auto-integrate everything
 
