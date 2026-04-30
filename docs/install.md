@@ -49,7 +49,7 @@ Add it to `~/.claude/settings.json`. The rule allows ONLY the wrapper, nothing e
 If you cloned the repo to hack on it:
 
 ```bash
-./test.sh        # 12 round-trip tests, pure bash + python3, no other deps
+./test.sh        # 51 tests, pure bash + python3, no other deps
 ```
 
 CI runs the same suite on Ubuntu and macOS plus `shellcheck` on every push and PR. See [CONTRIBUTING.md](https://github.com/slima4/agent-message/blob/main/CONTRIBUTING.md) for line budgets, the single-writer invariant, and the smaller/cheaper/faster rule.

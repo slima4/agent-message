@@ -40,7 +40,7 @@ Features that don't serve any of the three axes are out of scope. Point those at
 ./test.sh
 ```
 
-11 round-trip tests covering wrapper, shell helper, installer. Pure bash + python3, no other deps. CI runs the same script on Linux + macOS.
+51 tests covering wrapper, shell helper, installer, integrations, SAMP conformance. Pure bash + python3, no other deps. CI runs the same script on Linux + macOS.
 
 Cases the suite covers — and that you should mentally check when adding a feature:
 
@@ -52,8 +52,11 @@ Cases the suite covers — and that you should mentally check when adding a feat
 - **Thread inheritance** — reply uses the same thread as the message it replies to.
 - **`[thread:<id>]` override** — explicit prefix wins.
 - **Content-addressed `id`** — 16 hex chars, matches `sha256(canonical_json({ts,from,to,thread,body}))[:16]`.
-- **mtime short-circuit** — second `msg` call exits without parsing.
-- **Installer idempotence + uninstall** — `install.sh × 2 + --uninstall` cleans up.
+- **NFC normalization** — non-ASCII bodies normalize before hashing; cross-impl id stable.
+- **mtime short-circuit** — second read on both wrapper and shell paths exits without parsing.
+- **Installer idempotence + uninstall** — `install.sh × 2 + --uninstall` cleans up; rc-block injection is idempotent and stripped on uninstall.
+- **`samp-validate` conformance** — clean pass on round-trip output; catches tampered ids, single-writer violations, symlinked logs.
+- **Integrations** — `--integrate=<tool>` writes / strips marker block per tool, refuses symlinked targets, `auto`/`all` honor scope rules.
 
 Add a new test for any new feature. Prefer end-to-end (call the binary) over unit tests of internals — internals get refactored, contracts don't.
 
