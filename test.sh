@@ -140,6 +140,40 @@ test_wrapper_seen_deletion_forces_reread() {
   assert_contains "$out" "ping" "deleting .seen forces re-read despite mtime cache"
 }
 
+test_wrapper_mtime_sc_speedup_gate() {
+  # Wallclock perf gate: SC hit must be ≥2x faster than cold parse on a 20k-record log.
+  # Median both cold and warm to dampen CI runner jitter.
+  python3 - "$AGENT_MESSAGE_DIR" "$WRAPPER" "$TMP/bar" <<'PY' || return 1
+import hashlib, json, os, statistics, subprocess, sys, time
+d, wrapper, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+os.makedirs(d, exist_ok=True)
+base = int(time.time()) - 200000
+with open(f"{d}/log-alice.jsonl", "w") as f:
+    for i in range(20000):
+        core = {"ts": base + i, "from": "alice", "to": "bar",
+                "thread": f"t-{i}", "body": f"msg {i} body padding"}
+        mid = hashlib.sha256(json.dumps(core, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
+        f.write(json.dumps({"id": mid, **core}) + "\n")
+env = {**os.environ, "AGENT_MESSAGE_DIR": d}
+def run_inbox():
+    s = time.monotonic()
+    subprocess.run([wrapper, "inbox"], cwd=cwd, env=env, check=True, capture_output=True)
+    return (time.monotonic() - s) * 1000
+def cold_run():
+    for n in (".seen-bar", ".mtime-bar"):
+        try: os.unlink(f"{d}/{n}")
+        except FileNotFoundError: pass
+    return run_inbox()
+cold = statistics.median(cold_run() for _ in range(2))
+warm = statistics.median(run_inbox() for _ in range(2))
+ratio = cold / warm if warm > 0 else float("inf")
+print(f"  cold={cold:.1f}ms warm={warm:.1f}ms ratio={ratio:.2f}x")
+if ratio < 2.0:
+    print(f"  FAIL: SC speedup {ratio:.2f}x below 2x threshold")
+    sys.exit(1)
+PY
+}
+
 test_wrapper_id_is_content_addressed() {
   ( cd "$TMP/foo" && echo "same body" | "$WRAPPER" send bar ) >/dev/null
   local id1; id1=$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline())["id"])' \
@@ -905,6 +939,7 @@ TESTS=(
   test_wrapper_id_is_content_addressed
   test_wrapper_mtime_short_circuit
   test_wrapper_seen_deletion_forces_reread
+  test_wrapper_mtime_sc_speedup_gate
   test_msg_round_trip
   test_msg_mtime_short_circuit
   test_wrapper_version
