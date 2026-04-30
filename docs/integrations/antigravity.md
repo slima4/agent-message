@@ -18,7 +18,7 @@ If you'd rather scope the instructions to a single repo (e.g., for shared/team r
 ./install.sh --integrate=antigravity-repo
 ```
 
-Appends to `./AGENTS.md` at the cwd repo root. Same marker pattern. Requires cwd to be a real git repo.
+Appends to `./AGENTS.md` at the cwd. Same marker pattern. Works in any folder (refuses only `/` and `$HOME`).
 
 ## Manual
 

@@ -216,10 +216,19 @@ else:
 PY
 }
 
-# Real git repo only — refuse if cwd is not under .git/, or .git is a symlink.
+# Real git repo only — refuse if cwd has no .git/, or .git is a symlink.
 # Symlinked .git could be planted by a malicious checkout to satisfy the gate.
+# Used only by copilot Chat (writes under .github/, presupposes git anyway).
 in_real_git_repo() {
   [[ -d ".git" && ! -L ".git" ]]
+}
+
+# Light cwd sanity for per-repo integrations that don't require git (zed, AGENTS.md).
+# Refuses obvious non-project paths: / and $HOME. Anything else is user discretion.
+# Strips trailing slash from $HOME (env may set it as /Users/slim/) so the comparison holds.
+cwd_is_project() {
+  local home="${HOME%/}"
+  [[ -n "$PWD" && "$PWD" != "/" && "$PWD" != "$home" ]]
 }
 
 integrate_copilot() {
@@ -249,8 +258,8 @@ uninstall_copilot() {
 
 integrate_repo_root_md() {
   local label="$1" dst="$2"
-  if ! in_real_git_repo; then
-    echo "  $label: cwd is not a git repo; skipping (run from inside the target repo)" >&2
+  if ! cwd_is_project; then
+    echo "  $label: cwd is $PWD (not a project folder); skipping" >&2
     return 0
   fi
   if [[ -f "$dst" ]] && grep -qF "<!-- >>> agent-message >>> -->" "$dst"; then
