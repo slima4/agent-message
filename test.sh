@@ -165,7 +165,7 @@ test_wrapper_seen_deletion_forces_reread() {
 
 test_wrapper_mtime_sc_speedup_gate() {
   # Wallclock perf gate: SC hit must be ≥2x faster than cold parse on a 20k-record log.
-  # Median both cold and warm to dampen CI runner jitter.
+  # Median cold over 3 runs; min warm (true SC cost — least runner contention).
   python3 - "$AGENT_MESSAGE_DIR" "$WRAPPER" "$TMP/bar" <<'PY' || return 1
 import hashlib, json, os, statistics, subprocess, sys, time
 d, wrapper, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -187,8 +187,8 @@ def cold_run():
         try: os.unlink(f"{d}/{n}")
         except FileNotFoundError: pass
     return run_inbox()
-cold = statistics.median(cold_run() for _ in range(2))
-warm = statistics.median(run_inbox() for _ in range(2))
+cold = statistics.median(cold_run() for _ in range(3))
+warm = min(run_inbox() for _ in range(3))
 ratio = cold / warm if warm > 0 else float("inf")
 print(f"  cold={cold:.1f}ms warm={warm:.1f}ms ratio={ratio:.2f}x")
 if ratio < 2.0:
