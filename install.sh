@@ -18,8 +18,9 @@
 #                         copilot-cli       global ~/.copilot/copilot-instructions.md
 #                         antigravity       global ~/.gemini/AGENTS.md
 #                         antigravity-repo  per-repo ./AGENTS.md
+#                         codex             global ~/.codex/AGENTS.md
 #                         zed               per-repo ./.rules
-#                         all               cursor + copilot + copilot-cli + antigravity + zed
+#                         all               cursor + copilot + copilot-cli + antigravity + codex + zed
 #                         auto              detect installed tools and integrate
 #                       With --uninstall, strips only listed tools. Without
 #                       --uninstall, integrates them on top of main install.
@@ -110,13 +111,14 @@ inject_rc_block() {
 expand_integrations() {
   case "$1" in
     "") return 0;;
-    all) echo "cursor copilot copilot-cli antigravity zed";;
+    all) echo "cursor copilot copilot-cli antigravity codex zed";;
     auto)
       local out=""
       [[ -d "$HOME/.cursor" ]] && out="$out cursor"
       [[ -d ".git" ]] && out="$out copilot"
       [[ -d "$HOME/.copilot" ]] && out="$out copilot-cli"
       [[ -d "$HOME/.gemini" ]] && out="$out antigravity"
+      [[ -d "$HOME/.codex" ]] && out="$out codex"
       if [[ -d "$HOME/.config/zed" || -d "$HOME/Library/Application Support/Zed" ]]; then
         out="$out zed"
       fi
@@ -319,6 +321,10 @@ uninstall_antigravity_repo() { uninstall_repo_root_md "AGENTS.md"; }
 integrate_copilot_cli()      { integrate_global_md  "copilot-cli"      "$HOME/.copilot/copilot-instructions.md"; }
 uninstall_copilot_cli()      { uninstall_global_md  "$HOME/.copilot/copilot-instructions.md"; }
 
+# OpenAI Codex CLI: reads ~/.codex/AGENTS.md globally.
+integrate_codex()            { integrate_global_md  "codex"            "$HOME/.codex/AGENTS.md"; }
+uninstall_codex()            { uninstall_global_md  "$HOME/.codex/AGENTS.md"; }
+
 # Zed: per-repo only. Global rules live in an LMDB binary (Rules Library) — not safely scriptable.
 integrate_zed()              { integrate_repo_root_md "zed" ".rules"; }
 uninstall_zed()              { uninstall_repo_root_md ".rules"; }
@@ -332,6 +338,7 @@ run_integrate() {
       copilot-cli) integrate_copilot_cli;;
       antigravity) integrate_antigravity;;
       antigravity-repo) integrate_antigravity_repo;;
+      codex) integrate_codex;;
       zed) integrate_zed;;
       *) echo "  unknown integrate target: $tool" >&2;;
     esac
@@ -347,6 +354,7 @@ run_uninstall_integrate() {
       copilot-cli) uninstall_copilot_cli;;
       antigravity) uninstall_antigravity;;
       antigravity-repo) uninstall_antigravity_repo;;
+      codex) uninstall_codex;;
       zed) uninstall_zed;;
       *) echo "  unknown integrate target: $tool" >&2;;
     esac
@@ -379,6 +387,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   uninstall_cursor
   uninstall_copilot_cli
   uninstall_antigravity
+  uninstall_codex
   echo "agent-message uninstalled."
   echo "  removed: ${CMDS[*]/#/$COMMANDS_DIR/}"
   echo "  removed: $MSG_DIR/{log-*.jsonl,.seen-*,.mtime-*} (dir removed if empty)"
@@ -387,6 +396,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   echo "  removed: ~/.cursor/rules/agent-message.mdc (if present)"
   echo "  removed: ~/.copilot/copilot-instructions.md marker block (if present)"
   echo "  removed: ~/.gemini/AGENTS.md marker block (if present)"
+  echo "  removed: ~/.codex/AGENTS.md marker block (if present)"
   echo "  note:    per-repo integrations (copilot, antigravity-repo, zed) are NOT"
   echo "           auto-stripped; run \`./install.sh --uninstall --integrate=<tool>\`"
   echo "           from each repo to remove them."

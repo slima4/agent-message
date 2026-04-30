@@ -559,6 +559,46 @@ test_install_integrate_antigravity_global_preserves_existing_gemini_md() {
   fi
 }
 
+test_install_integrate_codex_writes_to_home_codex() {
+  local fake_home="$TMP/codex-home"
+  mkdir -p "$fake_home"
+  _iargs "$fake_home"
+
+  local args=( "${_IARGS[@]}" --integrate=codex )
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  local dst="$fake_home/.codex/AGENTS.md"
+  assert_file_exists "$dst" || return 1
+  grep -qF "<!-- >>> agent-message >>> -->" "$dst" || { echo "  marker not in $dst"; return 1; }
+  # Idempotent
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  local n; n=$(grep -c "^<!-- >>> agent-message >>> -->" "$dst" || true)
+  assert_eq "1" "$n" "marker once after re-run" || return 1
+  # Uninstall
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 || return 1
+  assert_file_missing "$dst"
+}
+
+test_install_integrate_codex_preserves_existing_agents_md() {
+  local fake_home="$TMP/codex-pre-home"
+  mkdir -p "$fake_home/.codex"
+  printf '# My Codex rules\nbe terse.\n' > "$fake_home/.codex/AGENTS.md"
+  _iargs "$fake_home"
+
+  local args=( "${_IARGS[@]}" --integrate=codex )
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" >/dev/null 2>&1 || return 1
+  local dst="$fake_home/.codex/AGENTS.md"
+  local content; content=$(cat "$dst")
+  assert_contains "$content" "My Codex rules" "user content preserved on inject" || return 1
+  assert_contains "$content" "agent-message" "marker injected" || return 1
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" --uninstall >/dev/null 2>&1 || return 1
+  content=$(cat "$dst")
+  assert_contains "$content" "My Codex rules" "user content preserved on uninstall" || return 1
+  if [[ "$content" == *"agent-message"* ]]; then
+    echo "  marker block not stripped"
+    return 1
+  fi
+}
+
 test_install_integrate_copilot_cli_writes_to_home_copilot() {
   local fake_home="$TMP/copilot-cli-home"
   mkdir -p "$fake_home"
@@ -808,6 +848,7 @@ test_install_integrate_all_includes_global_and_per_repo() {
   assert_file_exists "$fake_home/.cursor/rules/agent-message.mdc" || return 1
   assert_file_exists "$fake_home/.gemini/AGENTS.md" || return 1
   assert_file_exists "$fake_home/.copilot/copilot-instructions.md" || return 1
+  assert_file_exists "$fake_home/.codex/AGENTS.md" || return 1
   # Per-repo (cwd) integrations — `all` does NOT include antigravity-repo
   assert_file_exists "$fake_repo/.github/copilot-instructions.md" || return 1
   assert_file_exists "$fake_repo/.rules" || return 1
@@ -903,6 +944,8 @@ TESTS=(
   test_install_integrate_antigravity_global_preserves_existing_gemini_md
   test_install_integrate_copilot_cli_writes_to_home_copilot
   test_install_integrate_copilot_cli_preserves_existing_instructions
+  test_install_integrate_codex_writes_to_home_codex
+  test_install_integrate_codex_preserves_existing_agents_md
   test_install_integrate_zed_preserves_user_content
   test_install_integrate_zed_empty_file_removed
   test_install_integrate_zed_works_in_non_git_dir

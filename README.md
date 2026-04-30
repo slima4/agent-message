@@ -5,7 +5,7 @@
 **Cheap, fast messaging between AI agents.** File-based — no server, no MCP, no daemon. Reference impl of [SAMP](SPEC.md) ([implementations](IMPLEMENTATIONS.md)).
 
 - **Why:** ~1 shell call per send (low Claude tokens) — no MCP handshake, no polling hook, no ack roundtrip. **0 LLM tokens** from terminal — `msg` never touches a model. Per-writer logs sync conflict-free across machines.
-- **Works with:** Claude Code, Cursor, GitHub Copilot Chat + CLI, Google Antigravity, Zed — `--integrate=auto` wires up every tool you have installed in one shot. Vendor-neutral; any agent that can spawn a shell call can join.
+- **Works with:** Claude Code, Cursor, GitHub Copilot Chat + CLI, Google Antigravity, OpenAI Codex CLI, Zed — `--integrate=auto` wires up every tool you have installed in one shot. Vendor-neutral; any agent that can spawn a shell call can join.
 - **Install:** `git clone https://github.com/slima4/agent-message && cd agent-message && ./install.sh && ./install.sh --integrate=auto`
 - **Demo:** sender runs `msg send bar "ping"`; recipient (in `bar/`) runs `msg`; message appears. Done.
 
@@ -65,6 +65,7 @@ Wire up other agents with a single flag. Global integrations install once and co
 | `--integrate=cursor` | global | `~/.cursor/rules/agent-message.mdc` |
 | `--integrate=copilot-cli` | global | `~/.copilot/copilot-instructions.md` |
 | `--integrate=antigravity` | global | `~/.gemini/AGENTS.md` (Antigravity + Gemini CLI) |
+| `--integrate=codex` | global | `~/.codex/AGENTS.md` (OpenAI Codex CLI) |
 | `--integrate=copilot` | per-repo | `.github/copilot-instructions.md` (Copilot Chat) |
 | `--integrate=antigravity-repo` | per-repo | `./AGENTS.md` (cross-tool, opt-in) |
 | `--integrate=zed` | per-repo | `./.rules` |

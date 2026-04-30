@@ -34,6 +34,7 @@ nav:
     - GitHub Copilot Chat: integrations/copilot.md
     - GitHub Copilot CLI: integrations/copilot-cli.md
     - Google Antigravity: integrations/antigravity.md
+    - OpenAI Codex CLI: integrations/codex.md
     - Zed: integrations/zed.md
     - opencode: integrations/opencode.md
     - Continue.dev: integrations/continue.md
