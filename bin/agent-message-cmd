@@ -126,7 +126,7 @@ def inbox(args: list[str]) -> None:
             try:
                 c = json.loads(mf.read_text())
                 if c.get("max_mtime", 0) >= cur_max and c.get("files", 0) == cur_count:
-                    print("no new messages"); return
+                    print(f"no new messages (as {who})"); return
             except json.JSONDecodeError: pass
     since, since_ids = 0, set()
     if mode == "default" and sf.exists():
@@ -141,7 +141,7 @@ def inbox(args: list[str]) -> None:
         out.append((i, m))
     out.sort(key=lambda x: x[1].get("ts", 0))
     if not out:
-        print("no new messages" if mode == "default" else "no messages")
+        print(f"{'no new messages' if mode == 'default' else 'no messages'} (as {who})")
         if mode == "default": _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count}))
         return
     if mode == "raw":
@@ -160,7 +160,7 @@ def inbox(args: list[str]) -> None:
         _aw(sf, json.dumps({"ts": nm, "ids": list(nids)}))
         _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count}))
     senders = sorted({m["from"] for _, m in out})
-    print(f"{len(out)} new from: {', '.join(senders)}")
+    print(f"{len(out)} new from: {', '.join(senders)} (as {who})")
 
 
 OPS = {"send": send, "inbox": inbox, "reply": reply}

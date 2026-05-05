@@ -163,6 +163,23 @@ test_wrapper_seen_deletion_forces_reread() {
   assert_contains "$out" "ping" "deleting .seen forces re-read despite mtime cache"
 }
 
+test_wrapper_inbox_shows_active_alias() {
+  # cwd-derived alias is a footgun: cd into a subdir and your inbox silently
+  # shifts identity. inbox must show the active alias on every path so the
+  # user catches drift in one glance.
+  local out
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "(as bar)" "empty inbox shows alias" || return 1
+  ( cd "$TMP/foo" && echo "ping" | "$WRAPPER" send bar ) >/dev/null
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "(as bar)" "footer shows alias when messages present" || return 1
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "(as bar)" "mtime short-circuit shows alias" || return 1
+  # Negative: alias must change when cwd changes.
+  out=$( cd "$TMP/foo" && "$WRAPPER" inbox )
+  assert_contains "$out" "(as foo)" "alias reflects cwd basename"
+}
+
 test_wrapper_mtime_sc_speedup_gate() {
   # Wallclock perf gate: SC hit must be ≥2x faster than cold parse on a 20k-record log.
   # Median cold over 3 runs; min warm (true SC cost — least runner contention).
@@ -222,6 +239,21 @@ test_msg_round_trip() {
   # shellcheck source=shell/msg.sh
   out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg )
   assert_contains "$out" "hi from msg" "msg shows message"
+}
+
+test_msg_inbox_shows_active_alias() {
+  local out
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg )
+  assert_contains "$out" "(as bar)" "empty inbox shows alias" || return 1
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/foo" && msg send bar "ping" ) >/dev/null
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg )
+  assert_contains "$out" "(as bar)" "footer shows alias when messages present" || return 1
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg )
+  assert_contains "$out" "(as bar)" "mtime short-circuit shows alias"
 }
 
 test_msg_mtime_short_circuit() {
@@ -914,8 +946,10 @@ TESTS=(
   test_wrapper_id_is_content_addressed
   test_wrapper_mtime_short_circuit
   test_wrapper_seen_deletion_forces_reread
+  test_wrapper_inbox_shows_active_alias
   test_wrapper_mtime_sc_speedup_gate
   test_msg_round_trip
+  test_msg_inbox_shows_active_alias
   test_msg_mtime_short_circuit
   test_wrapper_version
   test_msg_version

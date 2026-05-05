@@ -115,7 +115,7 @@ if mode=="new" and mtime_file.exists() and seen_file.exists():
     try:
         c=json.loads(mtime_file.read_text())
         if c.get("max_mtime",0) >= cur_max and c.get("files",0) == cur_count:
-            print("no new messages"); raise SystemExit
+            print(f"no new messages (as {me})"); raise SystemExit
     except json.JSONDecodeError:
         pass
 since=0; since_ids=set()
@@ -152,7 +152,7 @@ for lf in log_paths:
             msgs.append(m)
 msgs.sort(key=lambda m: m.get("ts",0))
 if not msgs:
-    print("no new messages" if mode=="new" else "no messages")
+    print(f"{'no new messages' if mode=='new' else 'no messages'} (as {me})")
     if mode=="new":
         aw(mtime_file, json.dumps({"max_mtime":cur_max,"files":cur_count}))
     raise SystemExit
@@ -161,6 +161,8 @@ for m in msgs:
     body=m.get("body") or ""
     first=body.splitlines()[0][:80] if body else ""
     print(f"[{ts}] from={m['from']} thread={m['thread']}: {first}")
+senders=sorted({m["from"] for m in msgs})
+print(f"{len(msgs)} new from: {', '.join(senders)} (as {me})")
 if mode=="new":
     new_max=max(m.get("ts",0) for m in msgs)
     # Accumulate ids at max-ts across old + new so we don't lose prior state
