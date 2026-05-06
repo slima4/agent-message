@@ -353,6 +353,27 @@ PY
   assert_contains "$out" "single-writer" "validator catches single-writer violation"
 }
 
+test_cid_spec_golden() {
+  # SPEC.md §3 frozen vector. Pins canonical formula across wrapper + samp-validate.
+  # Body via Python \u0301 escape (NFD: e + combining acute) so editors can't silently
+  # NFC-fold the source. NFD body catches NFC removal; extra field "x" catches tuple growth.
+  local golden="5be5e1463ceca3cc"
+  local d="$TMP/golden"; mkdir -p "$d"
+  WRAPPER="$WRAPPER" python3 - "$golden" "$d" <<'PY' || return 1
+import importlib.util, importlib.machinery, json, os, sys
+from pathlib import Path
+golden, gdir = sys.argv[1], sys.argv[2]
+loader = importlib.machinery.SourceFileLoader("w", os.environ["WRAPPER"])
+spec = importlib.util.spec_from_loader("w", loader)
+m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+rec = {"ts": 1700000000, "from": "alice", "to": "bob", "thread": "t1", "body": "cafe\u0301", "x": "ignore"}
+got = m.cid(rec)
+if got != golden: sys.exit(f"  wrapper cid drifted from spec: {got} vs {golden}")
+(Path(gdir) / "log-alice.jsonl").write_text(json.dumps({"id": golden, **rec}, ensure_ascii=False) + "\n")
+PY
+  AGENT_MESSAGE_DIR="$d" "$VALIDATOR" >/dev/null 2>&1 || { echo "  samp-validate rejected golden record"; return 1; }
+}
+
 # ---- security + correctness tests ----
 
 test_msg_alias_traversal_blocked() {
@@ -987,6 +1008,7 @@ TESTS=(
   test_validator_clean
   test_validator_catches_id_tamper
   test_validator_catches_single_writer_violation
+  test_cid_spec_golden
   test_msg_alias_traversal_blocked
   test_wrapper_single_writer_runtime_enforced
   test_wrapper_nfc_body
