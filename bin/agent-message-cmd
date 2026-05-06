@@ -58,10 +58,17 @@ def _logs(d: Path) -> list[Path]:
     return [p for p in sorted(d.glob("log-*.jsonl")) if not p.is_symlink()]
 
 
+def _alias_of(lf: Path) -> str:
+    # Loud-fail: silent slice drift via §5 would wipe inboxes (also survives `python3 -O`).
+    n = lf.name
+    if not (n.startswith("log-") and n.endswith(".jsonl")): raise AssertionError(n)
+    return n[4:-6]
+
+
 def iter_to(d: Path, who: str):
     seen = set()
     for lf in _logs(d):
-        file_alias = lf.name[4:-6]
+        file_alias = _alias_of(lf)
         with open(lf) as f:
             for ln in f:
                 ln = ln.strip()
