@@ -382,6 +382,33 @@ PY
   AGENT_MESSAGE_DIR="$d" "$VALIDATOR" >/dev/null 2>&1 || { echo "  samp-validate rejected golden record"; return 1; }
 }
 
+test_cid_golden_nfd_thread() {
+  # Pins canonical bytes for a record whose `thread` field is in NFD form
+  # (e + combining acute). SPEC §3 names `body` as the only NFC-normalised
+  # field; if a future change extends NFC normalisation to `thread` (or any
+  # other field) the canonical bytes shift and this hash breaks. Cross-impl
+  # consistency verified by running samp-validate against the record.
+  local golden="7565a9dae7f349c6"
+  local d="$TMP/golden-nfd-thread"; mkdir -p "$d"
+  WRAPPER="$WRAPPER" python3 - "$golden" "$d" <<'PY' || return 1
+import importlib.util, importlib.machinery, json, os, sys
+from pathlib import Path
+golden, gdir = sys.argv[1], sys.argv[2]
+loader = importlib.machinery.SourceFileLoader("w", os.environ["WRAPPER"])
+spec = importlib.util.spec_from_loader("w", loader)
+m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+rec = {"ts": 1700000000, "from": "alice", "to": "bob",
+       "thread": "thréad", "body": "hi", "x": "ignore"}
+got = m.cid(rec)
+if got != golden:
+    sys.exit(f"  cid drifted: {got} vs {golden} — was NFC extended past body?")
+(Path(gdir) / "log-alice.jsonl").write_text(
+    json.dumps({"id": golden, **rec}, ensure_ascii=False) + "\n")
+PY
+  AGENT_MESSAGE_DIR="$d" "$VALIDATOR" >/dev/null 2>&1 || {
+    echo "  samp-validate rejected NFD-thread golden — cross-impl drift"; return 1; }
+}
+
 # ---- security + correctness tests ----
 
 test_msg_alias_traversal_blocked() {
@@ -944,6 +971,34 @@ test_install_integrate_all_includes_global_and_per_repo() {
   assert_file_missing "$fake_repo/AGENTS.md"
 }
 
+# Uninstall must NOT touch foreign files in $AGENT_MESSAGE_DIR — only files
+# matching the whitelist (log-*.jsonl, .seen-*, .mtime-*) are removed. Locks
+# the find-delete pattern at install.sh's uninstall block: any future widening
+# (e.g. `-name '*'` for "thorough cleanup") would eat user-owned content next
+# to the per-agent logs.
+test_uninstall_preserves_foreign_files_in_msg_dir() {
+  local fake_home="$TMP/sentinel-home" msgdir="$TMP/sentinel-msgdir"
+  mkdir -p "$fake_home" "$msgdir"
+  printf 'should survive\n' > "$msgdir/SENTINEL.txt"
+  printf 'foreign config\n' > "$msgdir/.agent-message-config"
+  printf '{}\n' > "$msgdir/log-foo.jsonl"
+  printf '{"ts":0,"ids":[]}\n' > "$msgdir/.seen-foo"
+  local args=(
+    --dir "$msgdir"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+    --no-shell
+  )
+  _install "$fake_home" "${args[@]}" --uninstall || return 1
+  # Whitelisted files: removed.
+  assert_file_missing "$msgdir/log-foo.jsonl" || return 1
+  assert_file_missing "$msgdir/.seen-foo" || return 1
+  # Foreign files: preserved.
+  assert_file_exists "$msgdir/SENTINEL.txt" || return 1
+  assert_file_exists "$msgdir/.agent-message-config"
+}
+
 # Re-running install over a file already containing the current marker block must
 # succeed (exit 0) and report "already integrated". Regression guard: ensure_marker_block
 # returns exit 2 to signal up-to-date, and `set -euo pipefail` is active — any caller
@@ -1099,6 +1154,7 @@ TESTS=(
   test_validator_catches_id_tamper
   test_validator_catches_single_writer_violation
   test_cid_spec_golden
+  test_cid_golden_nfd_thread
   test_msg_alias_traversal_blocked
   test_wrapper_single_writer_runtime_enforced
   test_wrapper_nfc_body
@@ -1135,6 +1191,7 @@ TESTS=(
   test_install_integrate_auto_global_only
   test_install_integrate_replaces_stale_marker_block
   test_install_integrate_already_integrated_idempotent
+  test_uninstall_preserves_foreign_files_in_msg_dir
   test_installer_idempotent_and_uninstall
   test_installer_rc_block_idempotent_and_stripped
 )
