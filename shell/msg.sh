@@ -104,7 +104,8 @@ from pathlib import Path
 me=os.environ["MSG_ME"]; d=Path(os.environ["MSG_DIR"]); mode=os.environ["MSG_MODE"]
 log_paths=[p for p in sorted(d.glob("log-*.jsonl")) if not p.is_symlink()]
 def aw(p, s):
-    t=p.with_suffix(".tmp"); t.write_text(s); os.replace(str(t), str(p))
+    # with_name (not with_suffix): dotted aliases like "host.local" must not collapse to ".seen-host.tmp".
+    t=p.with_name(p.name+".tmp"); t.write_text(s); os.replace(str(t), str(p))
 # mtime short-circuit — skip parse entirely if nothing observable changed.
 mtime_file=d/f".mtime-{me}"
 seen_file=d/f".seen-{me}"

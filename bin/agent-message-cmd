@@ -47,7 +47,9 @@ def thread_of(body: str, frm: str) -> tuple[str, str]:
 
 
 def _aw(p: Path, s: str) -> None:
-    tmp = p.with_suffix(".tmp")
+    # with_name (not with_suffix) so dotted aliases like "host.local" don't
+    # collapse to ".seen-host.tmp" — would collide with alias "host" mid-write.
+    tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(s)
     os.replace(str(tmp), str(p))
 

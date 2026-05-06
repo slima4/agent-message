@@ -180,6 +180,21 @@ test_wrapper_inbox_shows_active_alias() {
   assert_contains "$out" "(as foo)" "alias reflects cwd basename"
 }
 
+test_wrapper_dotted_alias_watermark() {
+  # ALIAS_RE permits dots. _aw must not use Path.with_suffix — for alias
+  # "host.local" that gives ".seen-host.tmp" (drops .local), risking collision
+  # with alias "host" mid-write and orphaned tmps that masquerade as another
+  # alias's watermark on crash.
+  mkdir -p "$TMP/dotbox"
+  echo "host.local" > "$TMP/dotbox/.agent-message"
+  ( cd "$TMP/foo" && echo "ping" | "$WRAPPER" send host.local ) >/dev/null
+  ( cd "$TMP/dotbox" && "$WRAPPER" inbox ) >/dev/null
+  assert_file_exists "$AGENT_MESSAGE_DIR/.seen-host.local" || return 1
+  assert_file_exists "$AGENT_MESSAGE_DIR/.mtime-host.local" || return 1
+  local out; out=$( cd "$TMP/dotbox" && "$WRAPPER" inbox )
+  assert_contains "$out" "no new messages (as host.local)" "SC hit for dotted alias"
+}
+
 test_wrapper_mtime_sc_speedup_gate() {
   # Wallclock perf gate: SC hit must be ≥2x faster than cold parse on a 20k-record log.
   # Median cold over 3 runs; min warm (true SC cost — least runner contention).
@@ -254,6 +269,20 @@ test_msg_inbox_shows_active_alias() {
   # shellcheck source=shell/msg.sh
   out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg )
   assert_contains "$out" "(as bar)" "mtime short-circuit shows alias"
+}
+
+test_msg_dotted_alias_watermark() {
+  mkdir -p "$TMP/dotbox"
+  echo "host.local" > "$TMP/dotbox/.agent-message"
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/foo" && msg send host.local "ping" ) >/dev/null
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/dotbox" && msg ) >/dev/null
+  assert_file_exists "$AGENT_MESSAGE_DIR/.seen-host.local" || return 1
+  assert_file_exists "$AGENT_MESSAGE_DIR/.mtime-host.local" || return 1
+  # shellcheck source=shell/msg.sh
+  local out; out=$( source "$SHELL_HELPER"; cd "$TMP/dotbox" && msg )
+  assert_contains "$out" "no new messages (as host.local)" "SC hit for dotted alias"
 }
 
 test_msg_mtime_short_circuit() {
@@ -947,9 +976,11 @@ TESTS=(
   test_wrapper_mtime_short_circuit
   test_wrapper_seen_deletion_forces_reread
   test_wrapper_inbox_shows_active_alias
+  test_wrapper_dotted_alias_watermark
   test_wrapper_mtime_sc_speedup_gate
   test_msg_round_trip
   test_msg_inbox_shows_active_alias
+  test_msg_dotted_alias_watermark
   test_msg_mtime_short_circuit
   test_wrapper_version
   test_msg_version
