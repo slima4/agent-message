@@ -937,6 +937,39 @@ test_install_integrate_all_includes_global_and_per_repo() {
   assert_file_missing "$fake_repo/AGENTS.md"
 }
 
+# --integrate=auto runs ONLY global integrations. Per-repo writers (copilot,
+# zed, antigravity-repo) require explicit --integrate=<tool> from inside the
+# target repo, even if their detection signals are present. Pre-rename
+# behaviour wrote .github/copilot-instructions.md and .rules into the cwd
+# whenever the user happened to run install from a git-backed directory
+# (including the agent-message clone itself).
+test_install_integrate_auto_global_only() {
+  local fake_home="$TMP/auto-home"
+  local fake_repo="$TMP/auto-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  # Plant detection signals for every auto-eligible tool, AND for the per-repo
+  # tools we expect auto to skip.
+  mkdir -p "$fake_home/.cursor" \
+           "$fake_home/.copilot" \
+           "$fake_home/.gemini" \
+           "$fake_home/.codex" \
+           "$fake_home/.config/zed"
+  _iargs "$fake_home"
+
+  local args=( "${_IARGS[@]}" --integrate=auto )
+  ( cd "$fake_repo" && _install "$fake_home" "${args[@]}" ) || return 1
+  # Global integrations: present.
+  assert_file_exists "$fake_home/.cursor/rules/agent-message.mdc" || return 1
+  assert_file_exists "$fake_home/.copilot/copilot-instructions.md" || return 1
+  assert_file_exists "$fake_home/.gemini/AGENTS.md" || return 1
+  assert_file_exists "$fake_home/.codex/AGENTS.md" || return 1
+  # Per-repo writers: must NOT fire under auto, even though signals are present
+  # (cwd has .git, fake_home has .config/zed).
+  assert_file_missing "$fake_repo/.github/copilot-instructions.md" || return 1
+  assert_file_missing "$fake_repo/.rules" || return 1
+  assert_file_missing "$fake_repo/AGENTS.md"
+}
+
 test_installer_idempotent_and_uninstall() {
   local fake_home="$TMP/fake-home"
   _iargs "$fake_home"
@@ -1043,6 +1076,7 @@ TESTS=(
   test_install_uninstall_preserves_attacker_planted_marker_pair
   test_install_uninstall_global_preserves_attacker_planted_marker
   test_install_integrate_all_includes_global_and_per_repo
+  test_install_integrate_auto_global_only
   test_installer_idempotent_and_uninstall
   test_installer_rc_block_idempotent_and_stripped
 )

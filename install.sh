@@ -21,7 +21,10 @@
 #                         codex             global ~/.codex/AGENTS.md
 #                         zed               per-repo ./.rules
 #                         all               cursor + copilot + copilot-cli + antigravity + codex + zed
-#                         auto              detect installed tools and integrate
+#                         auto              detect installed GLOBAL tools and integrate.
+#                                           Per-repo writers (copilot, zed, antigravity-repo)
+#                                           are NOT auto-included: run them explicitly from
+#                                           inside the target repo.
 #                       With --uninstall, strips only listed tools. Without
 #                       --uninstall, integrates them on top of main install.
 #   --uninstall         Remove installed commands, wrapper, shell helper, message dir,
@@ -113,15 +116,18 @@ expand_integrations() {
     "") return 0;;
     all) echo "cursor copilot copilot-cli antigravity codex zed";;
     auto)
+      # Global integrations only. Per-repo writers (copilot, zed, antigravity-repo)
+      # are intentionally excluded: a global signal like ~/.config/zed/ or cwd
+      # .git/ tells us the user has the tool, not that the current cwd is the
+      # repo where rules should land. Running --integrate=auto from the
+      # agent-message clone itself would otherwise drop .rules / .github/
+      # files inside the clone. Users who want per-repo wiring run
+      # --integrate=<tool> explicitly from inside the target repo.
       local out=""
       [[ -d "$HOME/.cursor" ]] && out="$out cursor"
-      [[ -d ".git" ]] && out="$out copilot"
       [[ -d "$HOME/.copilot" ]] && out="$out copilot-cli"
       [[ -d "$HOME/.gemini" ]] && out="$out antigravity"
       [[ -d "$HOME/.codex" ]] && out="$out codex"
-      if [[ -d "$HOME/.config/zed" || -d "$HOME/Library/Application Support/Zed" ]]; then
-        out="$out zed"
-      fi
       echo "$out";;
     *) echo "${1//,/ }";;
   esac
