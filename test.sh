@@ -36,6 +36,13 @@ assert_contains() {
   return 1
 }
 
+assert_not_contains() {
+  [[ "$1" != *"$2"* ]] && return 0
+  echo "  ASSERT_NOT_CONTAINS failed ($3): forbidden=[$2]"
+  echo "  haystack:"; echo "$1" | sed 's/^/    /'
+  return 1
+}
+
 assert_file_exists() {
   [[ -f "$1" ]] && return 0
   echo "  ASSERT_FILE_EXISTS failed: $1 missing"
@@ -937,6 +944,55 @@ test_install_integrate_all_includes_global_and_per_repo() {
   assert_file_missing "$fake_repo/AGENTS.md"
 }
 
+# Re-running install over a file already containing the current marker block must
+# succeed (exit 0) and report "already integrated". Regression guard: ensure_marker_block
+# returns exit 2 to signal up-to-date, and `set -euo pipefail` is active — any caller
+# that fails to escape the non-zero exit (e.g. via `|| rc=$?`) aborts the installer.
+test_install_integrate_already_integrated_idempotent() {
+  local fake_home="$TMP/idem-home"
+  local fake_repo="$TMP/idem-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  _iargs "$fake_home"
+  local args=( "${_IARGS[@]}" --integrate=antigravity-repo )
+  ( cd "$fake_repo" && _install "$fake_home" "${args[@]}" ) || return 1
+  # Second run hits the exit-2 path. Must not abort.
+  local out
+  out=$( cd "$fake_repo" && HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${args[@]}" 2>&1 ) || return 1
+  assert_contains "$out" "antigravity-repo: AGENTS.md (already integrated)" \
+    "second run reports already integrated" || return 1
+  # File must still contain exactly one marker block.
+  assert_marker_once "$fake_repo/AGENTS.md"
+}
+
+# Re-running install with edited marker_block content must replace the stale block
+# in place, not skip it. Pre-rename behaviour grepped for the open anchor and
+# bailed out, so a v1.x → v1.y edit to marker_block (URL fix, wording change)
+# never reached existing installs.
+test_install_integrate_replaces_stale_marker_block() {
+  local fake_home="$TMP/stale-home"
+  local fake_repo="$TMP/stale-repo"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  cat > "$fake_repo/AGENTS.md" <<'STALE'
+# Project rules
+
+<!-- >>> agent-message >>> -->
+## Agent messaging (SAMP v1)
+old wording from a previous installer version.
+sender: ~/.agent-message-cmd
+<!-- <<< agent-message <<< -->
+STALE
+  _iargs "$fake_home"
+  local args=( "${_IARGS[@]}" --integrate=antigravity-repo )
+  ( cd "$fake_repo" && _install "$fake_home" "${args[@]}" ) || return 1
+  local content; content=$(cat "$fake_repo/AGENTS.md")
+  assert_contains "$content" "# Project rules" "user header preserved" || return 1
+  # Stale wording must be gone; current marker_block content must be present.
+  assert_not_contains "$content" "old wording from a previous" \
+    "stale block stripped on re-install" || return 1
+  assert_contains "$content" "Send: \`echo '<body>' | ~/.agent-message-cmd send" \
+    "current marker block written"
+}
+
 # --integrate=auto runs ONLY global integrations. Per-repo writers (copilot,
 # zed, antigravity-repo) require explicit --integrate=<tool> from inside the
 # target repo, even if their detection signals are present. Pre-rename
@@ -1077,6 +1133,8 @@ TESTS=(
   test_install_uninstall_global_preserves_attacker_planted_marker
   test_install_integrate_all_includes_global_and_per_repo
   test_install_integrate_auto_global_only
+  test_install_integrate_replaces_stale_marker_block
+  test_install_integrate_already_integrated_idempotent
   test_installer_idempotent_and_uninstall
   test_installer_rc_block_idempotent_and_stripped
 )

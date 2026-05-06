@@ -186,26 +186,79 @@ Spec: https://github.com/slima4/agent-message/blob/main/SPEC.md
 BLOCK
 }
 
-# Append marker block via O_NOFOLLOW — refuses to follow symlinks (TOCTOU-safe).
-append_marker_block() {
-  local dst="$1" block; block=$(marker_block)
-  python3 - "$dst" "$block" <<'PY'
-import sys, os
-p, data = sys.argv[1], sys.argv[2]
+# Idempotent marker writer. Three cases:
+#   exact match already present     → no-op (exit 2)
+#   anchors present, content stale  → strip stale (anchor-based) + append current (exit 0)
+#   anchors absent                  → append current (exit 0)
+# Anchor-based replace during install is safe because the user invoked install
+# on this file: replacing whatever was between our anchors with our current
+# block is a net upgrade. Symlink-safe via O_NOFOLLOW on every open.
+ensure_marker_block() {
+  local dst="$1" block rc=0; block=$(marker_block)
+  # `|| rc=$?` keeps `set -e` from aborting the script when python3 returns
+  # the non-zero "already up-to-date" sentinel (exit 2) or a symlink error (1).
+  python3 - "$dst" "$block" <<'PY' || rc=$?
+import sys, os, re
+p, expected = sys.argv[1], sys.argv[2]
+PAT = re.compile(
+    r"\n?<!-- >>> agent-message >>> -->.*?<!-- <<< agent-message <<< -->\n?",
+    re.DOTALL,
+)
+
+try:
+    fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "r") as f: s = f.read()
+except FileNotFoundError:
+    s = ""
+except OSError:
+    print(f"  refusing to follow symlink at {p}", file=sys.stderr)
+    sys.exit(1)
+
+if expected in s:
+    sys.exit(2)
+
+m = PAT.search(s)
+if m:
+    s2 = (s[:m.start()] + s[m.end():]).rstrip("\n")
+    try:
+        fd = os.open(p, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+    except OSError:
+        print(f"  refusing to follow symlink at {p}", file=sys.stderr)
+        sys.exit(1)
+    with os.fdopen(fd, "w") as f:
+        if s2: f.write(s2 + "\n")
+
 try:
     fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644)
 except OSError:
     print(f"  refusing to follow symlink at {p}", file=sys.stderr)
     sys.exit(1)
 with os.fdopen(fd, "a") as f:
-    f.write(data + "\n")
+    f.write(expected + "\n")
 PY
+  return $rc
+}
+
+# Dispatch ensure_marker_block + echo status. Used by all integrate_* helpers.
+# `|| rc=$?` again — needed because `set -e` would otherwise abort on the
+# "already up-to-date" exit 2 from ensure_marker_block before we can dispatch.
+emit_marker_status() {
+  local label="$1" dst="$2" rc=0
+  ensure_marker_block "$dst" || rc=$?
+  case $rc in
+    0) echo "  $label: $dst";;
+    2) echo "  $label: $dst (already integrated)";;
+    # Other non-zero (symlink refusal) — ensure_marker_block already logged
+    # to stderr. Stay best-effort: continue the installer rather than abort.
+  esac
 }
 
 # Strip the canonical marker block by EXACT-match substring removal.
 # Defends against attacker-planted marker pairs wrapping legitimate user content:
-# the regex-based predecessor would have stripped `<open>...arbitrary user content...<close>`.
-# This implementation only removes byte-for-byte what we wrote.
+# a regex predecessor would have stripped `<open>...arbitrary content...<close>`.
+# This implementation only removes byte-for-byte what we wrote. If you edit
+# marker_block contents, re-run install before uninstalling — ensure_marker_block
+# replaces the stale block so exact-match strip then succeeds.
 strip_marker_block() {
   local dst="$1"
   [[ -f "$dst" ]] || return 0
@@ -249,14 +302,7 @@ integrate_copilot() {
     return 0
   fi
   mkdir -p ".github"
-  local dst=".github/copilot-instructions.md"
-  if [[ -f "$dst" ]] && grep -qF "<!-- >>> agent-message >>> -->" "$dst"; then
-    echo "  copilot: $dst (already integrated)"
-    return 0
-  fi
-  if append_marker_block "$dst"; then
-    echo "  copilot: $dst"
-  fi
+  emit_marker_status "copilot" ".github/copilot-instructions.md"
 }
 
 uninstall_copilot() {
@@ -270,13 +316,7 @@ integrate_repo_root_md() {
     echo "  $label: cwd is $PWD (not a project folder); skipping" >&2
     return 0
   fi
-  if [[ -f "$dst" ]] && grep -qF "<!-- >>> agent-message >>> -->" "$dst"; then
-    echo "  $label: $dst (already integrated)"
-    return 0
-  fi
-  if append_marker_block "$dst"; then
-    echo "  $label: $dst"
-  fi
+  emit_marker_status "$label" "$dst"
 }
 
 uninstall_repo_root_md() {
@@ -288,7 +328,7 @@ uninstall_repo_root_md() {
 #   - symlinked parent dir (e.g. ~/.gemini → /attacker/dir): mkdir -p silently no-ops on
 #     a symlink-to-dir, after which O_NOFOLLOW on the final component does NOT fire.
 #     Refuse if dirname is a symlink before creating or writing.
-#   - symlinked target file: O_NOFOLLOW in append_marker_block.
+#   - symlinked target file: O_NOFOLLOW in ensure_marker_block.
 integrate_global_md() {
   local label="$1" dst="$2" parent
   parent=$(dirname "$dst")
@@ -302,13 +342,7 @@ integrate_global_md() {
     echo "  $label: refusing — $parent is a symlink (post-mkdir)" >&2
     return 0
   fi
-  if [[ -f "$dst" ]] && grep -qF "<!-- >>> agent-message >>> -->" "$dst"; then
-    echo "  $label: $dst (already integrated)"
-    return 0
-  fi
-  if append_marker_block "$dst"; then
-    echo "  $label: $dst"
-  fi
+  emit_marker_status "$label" "$dst"
 }
 
 uninstall_global_md() {
