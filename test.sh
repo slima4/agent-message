@@ -280,8 +280,9 @@ test_msg_dotted_alias_watermark() {
   ( source "$SHELL_HELPER"; cd "$TMP/dotbox" && msg ) >/dev/null
   assert_file_exists "$AGENT_MESSAGE_DIR/.seen-host.local" || return 1
   assert_file_exists "$AGENT_MESSAGE_DIR/.mtime-host.local" || return 1
+  local out
   # shellcheck source=shell/msg.sh
-  local out; out=$( source "$SHELL_HELPER"; cd "$TMP/dotbox" && msg )
+  out=$( source "$SHELL_HELPER"; cd "$TMP/dotbox" && msg )
   assert_contains "$out" "no new messages (as host.local)" "SC hit for dotted alias"
 }
 
