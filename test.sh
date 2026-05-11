@@ -252,6 +252,41 @@ assert rec["id"] == expected, f'id mismatch: {rec["id"]} vs {expected}'
 PY
 }
 
+test_wrapper_logs_already_returns_list() {
+  # _logs() returns list[Path] (sorted glob comprehension), called once per
+  # iter_to. Guards against future "precompute log files" wraps that add a
+  # copy allocation for zero speedup.
+  python3 - "$WRAPPER" "$AGENT_MESSAGE_DIR" <<'PY' || return 1
+import sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+mod = SourceFileLoader("amc", sys.argv[1]).load_module()
+Path(sys.argv[2]).mkdir(parents=True, exist_ok=True)
+r = mod._logs(Path(sys.argv[2]))
+assert isinstance(r, list), f"_logs must return list, got {type(r).__name__}"
+PY
+}
+
+test_wrapper_id_falsy_falls_through_to_cid() {
+  # Cross-impl parity: shell/msg.sh uses `m.get("id") or cid(m)` in 5 places,
+  # so wrapper must also recompute via cid() on falsy id (id:"") — not just
+  # on None. Plant a malformed id:"" record alongside a conformant twin with
+  # the recomputed cid; iter_to must dedup both to one.
+  mkdir -p "$AGENT_MESSAGE_DIR"
+  local ts="1700000000" body="parity"
+  local recomputed
+  recomputed=$(python3 -c "
+import hashlib, json
+core = {'ts': $ts, 'from': 'foo', 'to': 'bar', 'thread': 't', 'body': '$body'}
+print(hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()[:16])
+")
+  printf '{"id":"","ts":%s,"from":"foo","to":"bar","thread":"t","body":"%s"}\n' "$ts" "$body" >  "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+  printf '{"id":"%s","ts":%s,"from":"foo","to":"bar","thread":"t","body":"%s"}\n' "$recomputed" "$ts" "$body" >> "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+  local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  local n; n=$(echo "$out" | grep -c "from=foo" || true)
+  assert_eq "1" "$n" "id:'' falls through to cid() and dedups against conformant twin"
+}
+
 # ---- shell helper tests ----
 # shellcheck source=shell/msg.sh
 test_msg_round_trip() {
@@ -1139,6 +1174,8 @@ TESTS=(
   test_wrapper_thread_inheritance
   test_wrapper_thread_override
   test_wrapper_id_is_content_addressed
+  test_wrapper_logs_already_returns_list
+  test_wrapper_id_falsy_falls_through_to_cid
   test_wrapper_mtime_short_circuit
   test_wrapper_seen_deletion_forces_reread
   test_wrapper_inbox_shows_active_alias
