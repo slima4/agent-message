@@ -130,6 +130,9 @@ from pathlib import Path
 me=os.environ["MSG_ME"]; d=Path(os.environ["MSG_DIR"]); mode=os.environ["MSG_MODE"]
 A=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 S=lambda s: re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", s)
+# Body chars printed per run — bounds a huge record from flooding the terminal.
+# Every elision is announced; a silently truncated body reads as an empty one.
+BUDGET=8000
 log_paths=[p for p in sorted(d.glob("log-*.jsonl")) if not p.is_symlink()]
 def aw(p, s):
     # with_name (not with_suffix): dotted aliases like "host.local" must not collapse
@@ -191,7 +194,7 @@ for lf in log_paths:
             # Watermark: strictly past, or already-shown id (ids cover every shown
             # record with ts >= the clock-capped watermark).
             if mode=="new" and (t<since or k in since_ids): continue
-            m["_k"]=k
+            m["_k"]=k; m["_id"]=mid
             msgs.append(m)
 msgs.sort(key=lambda m: m["ts"])
 if not msgs:
@@ -199,12 +202,23 @@ if not msgs:
     if mode=="new":
         aw(mtime_file, json.dumps({"max_mtime":cur_max,"files":cur_count,"size":cur_size}))
     raise SystemExit
-for m in msgs:
+# Bodies in both modes: `all` is the re-read mode, and re-reading is exactly when
+# the body is wanted. The budget bounds the output, not the mode.
+bodies=[S(m["body"]).strip("\n") for m in msgs]
+full=set(); left=BUDGET
+for x in range(len(msgs)-1, -1, -1):  # newest first — the budget should buy the newest
+    if len(bodies[x])<=left: left-=len(bodies[x]); full.add(x)
+for n, m in enumerate(msgs):
     ts=time.strftime("%m-%d %H:%M", time.localtime(m["ts"]))
-    first=S(m["body"].splitlines()[0][:80]) if m["body"] else ""
-    print(f"[{ts}] from={m['from']} thread={S(m['thread'])}: {first}")
+    print(f"[{ts}] from={m['from']} id={m['_id'][:8]} thread={S(m['thread'])}:")
+    body=bodies[n]
+    shown=body if n in full else (body.splitlines()[0][:80].rstrip() if body else "")
+    # Every body line indented: a body mimicking a header line can't impersonate one.
+    for ln in (shown.splitlines() or ["(empty)"]): print("  "+ln if ln else "")
+    if len(shown)<len(body): print(f"  … +{len(body)-len(shown)} chars elided — msg cat {m['_id'][:8]}")
 senders=sorted({m["from"] for m in msgs})
-print(f"{len(msgs)} new from: {', '.join(senders)} (as {me})")
+# "new" only in default: all re-reads already-seen messages, none of them new.
+print(f"{len(msgs)} {'new' if mode=='new' else 'total'} from: {', '.join(senders)} (as {me})")
 if mode=="new":
     # Watermark capped at local now so a fast-clock sender can't advance it past
     # honest senders; ids carry every shown record with ts >= the cap.

@@ -9,6 +9,10 @@ __version__ = "1.2.0"
 
 ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")  # C0 minus \t\n, plus DEL — display sanitizer
+# Body chars printed per inbox run. Bounds a hostile/buggy peer appending a huge
+# record: unbounded bodies would exhaust the reading agent's context. Every
+# elision is announced — a silently truncated body reads as an empty one.
+BUDGET = 8000
 
 
 def D() -> Path:
@@ -194,10 +198,20 @@ def inbox(args: list[str]) -> None:
         for _, m in out:
             print(json.dumps(m, ensure_ascii=False))
         return
-    for _, m in out:
+    # Bodies in both default and all: `all` is the re-read mode, and re-reading is
+    # exactly when the body is wanted. The budget bounds the output, not the mode.
+    bodies = [_sane(m["body"]).strip("\n") for _, m in out]
+    full, left = set(), BUDGET
+    for x in range(len(out) - 1, -1, -1):  # newest first — the budget should buy the newest
+        if len(bodies[x]) <= left: left -= len(bodies[x]); full.add(x)
+    for n, (i, m) in enumerate(out):
         t = time.strftime("%m-%d %H:%M", time.localtime(m["ts"]))
-        first = _sane(m["body"].splitlines()[0][:80]) if m["body"] else ""
-        print(f"[{t}] from={m['from']} thread={_sane(m['thread'])}: {first}")
+        print(f"[{t}] from={m['from']} id={i[:8]} thread={_sane(m['thread'])}:")
+        body = bodies[n]
+        shown = body if n in full else (body.splitlines()[0][:80].rstrip() if body else "")
+        # Every body line indented: a body mimicking a header line can't impersonate one.
+        for ln in (shown.splitlines() or ["(empty)"]): print("  " + ln if ln else "")
+        if len(shown) < len(body): print(f"  … +{len(body) - len(shown)} chars elided — 'inbox raw' for full text")
     if mode == "default":
         # Watermark capped at local now so a fast-clock sender can't advance it
         # past honest senders; ids carry every shown record with ts >= the cap.
@@ -207,7 +221,8 @@ def inbox(args: list[str]) -> None:
         _aw(sf, json.dumps({"ts": new_since, "ids": new_ids}))
         _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count, "size": cur_size}))
     senders = sorted({m["from"] for _, m in out})
-    print(f"{len(out)} new from: {', '.join(senders)} (as {who})")
+    # "new" only in default: all re-reads already-seen messages, none of them new.
+    print(f"{len(out)} {'new' if mode == 'default' else 'total'} from: {', '.join(senders)} (as {who})")
 
 
 OPS = {"send": send, "inbox": inbox, "reply": reply}
