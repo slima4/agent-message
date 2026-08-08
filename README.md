@@ -81,9 +81,9 @@ From any Claude Code session (any repo, any path):
 
 # In repo "bar":
 /message-inbox
-  [04-24 17:42] from=foo id=4a49eb2e thread=2026-04-24-foo-need-your-review:
-    need your review on the schema change
-  1 new from: foo (as bar)
+[08-08 18:20] from=foo id=4a48f8ec thread=2026-08-08-foo-need-your-review-on-the-schema-change:
+  need your review on the schema change
+1 new from: foo (as bar)
 
 /message-reply lgtm, merge when ready
 /message-inbox 2      # re-read the 2 latest, read or not
@@ -93,10 +93,10 @@ From any terminal (**0 LLM tokens** — doesn't hit any model at all):
 
 ```console
 $ msg send bar "need your review on the schema change"
-sent foo→bar thread=2026-04-24-foo-need-your-review id=ab12cd34ef56…
+sent foo→bar thread=2026-08-08-foo-need-your-review-on-the-schema-change id=4a48f8ec9c868a1c
 
 $ msg
-[04-24 17:42] from=foo id=4a49eb2e thread=2026-04-24-foo-need-your-review:
+[08-08 18:20] from=foo id=4a48f8ec thread=2026-08-08-foo-need-your-review-on-the-schema-change:
   need your review on the schema change
 1 new from: foo (as bar)
 
@@ -126,7 +126,7 @@ This is the same binary Claude Code uses — the slash commands are thin wrapper
 Each writer owns one file: `$DIR/log-<alias>.jsonl`. One message per line:
 
 ```json
-{"id": "ab12cd34ef56…", "ts": 1777040863, "from": "foo", "to": "bar", "thread": "2026-04-24-foo-need-your-review", "body": "…"}
+{"id": "4a48f8ec9c868a1c", "ts": 1786202456, "from": "foo", "to": "bar", "thread": "2026-08-08-foo-need-your-review-on-the-schema-change", "body": "need your review on the schema change"}
 ```
 
 - `/message-send <to> <body>` (or `msg send <to> <body>`) — appends one line to `log-<me>.jsonl`.

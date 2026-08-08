@@ -33,7 +33,7 @@ Cost: one `Bash` tool call per operation. The slash command file is a thin promp
 ## What a read prints
 
 ```
-[08-08 14:06] from=foo id=4a49eb2e thread=2026-08-08-foo-need-your-review:
+[08-08 18:21] from=foo id=4698847e thread=2026-08-08-foo-need-your-review-on-the-schema-change:
   need your review on the schema change
   second line, indented like the first
 1 new from: foo (as bar)
