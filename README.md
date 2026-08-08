@@ -134,7 +134,7 @@ Each writer owns one file: `$DIR/log-<alias>.jsonl`. One message per line:
 
 - `/message-send <to> <body>` (or `msg send <to> <body>`) — appends one line to `log-<me>.jsonl`.
 - `/message-inbox` (or `msg`) — unions `log-*.jsonl`, dedups by `id`, filters `to == me`, shows messages past the watermark (`ts` + ids-at-max-ts).
-- `/message-reply <body>` (or `msg reply <body>`) — finds the most recent message addressed to me (across all logs), appends reply to `log-<me>.jsonl`.
+- `/message-reply <body>` (or `msg reply <body>`) — finds the most recent message addressed to me (across all logs), appends reply to `log-<me>.jsonl`. If two *different* senders tie at the newest timestamp, arrival order is unrecoverable — it lists the candidates and refuses rather than guess; use `send <from>` with `[thread:<thread>]` to pick.
 
 No server. No network. No port. Works offline.
 

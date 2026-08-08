@@ -99,8 +99,18 @@ for lf in sorted(d.glob("log-*.jsonl")):
             if m["from"]!=file_alias: continue
             if m["to"]==me: mine.append(m)
 if not mine: sys.exit("no inbox messages")
-mine.sort(key=lambda m: m["ts"])
-last=mine[-1]
+newest_ts=max(m["ts"] for m in mine)
+newest=[m for m in mine if m["ts"]==newest_ts]
+# Only a cross-sender tie is unrecoverable (§5 single-writer log = arrival order).
+targets={m["from"]:m for m in newest}
+if len(targets)>1:
+    lines=[f"reply: {len(targets)} senders tie at newest ts={newest_ts}; refusing ambiguous reply"]
+    for frm,m in sorted(targets.items()):
+        first=S(m["body"].splitlines()[0][:80]) if m["body"] else ""
+        lines.append(f"  {frm}  [thread:{S(m['thread'])}]  {first}")
+    lines.append('pick one: msg send <alias> "[thread:...] <body>" using a [thread:...] above')
+    sys.exit("\n".join(lines))
+last=newest[-1]
 ts=int(time.time())
 core={"ts":ts,"from":me,"to":last["from"],"thread":last["thread"],"body":body}
 mid=hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
@@ -439,7 +449,7 @@ print(f"compacted {lf.name}: {len(orig)} → {len(keep)} line(s), {dropped} dupl
 PY
       ;;
     --version|-V|version)
-      echo "msg 1.1.1 (SAMP v1)"
+      echo "msg 1.2.0 (SAMP v1)"
       ;;
     help|-h|--help)
       cat <<EOF

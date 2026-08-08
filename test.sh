@@ -146,6 +146,71 @@ test_wrapper_thread_inheritance() {
   assert_eq "$sent_thread" "$reply_thread" "reply inherits thread"
 }
 
+test_reply_rejects_two_sender_same_second_tie() {
+  mkdir -p "$AGENT_MESSAGE_DIR"
+  printf '%s\n' '{"ts":1700000000,"from":"aaa","to":"bar","thread":"thread-a","body":"from aaa"}' \
+    > "$AGENT_MESSAGE_DIR/log-aaa.jsonl"
+  printf '%s\n' '{"ts":1700000000,"from":"zzz","to":"bar","thread":"thread-z","body":"from zzz"}' \
+    > "$AGENT_MESSAGE_DIR/log-zzz.jsonl"
+
+  local out rc
+  out=$( cd "$TMP/bar" && printf 'ack' | "$WRAPPER" reply 2>&1 ); rc=$?
+  assert_eq "1" "$rc" "wrapper rejects ambiguous reply" || return 1
+  assert_contains "$out" "2 senders tie at newest ts=1700000000" "wrapper explains tie" || return 1
+  assert_contains "$out" "aaa  [thread:thread-a]  from aaa" "wrapper lists aaa candidate" || return 1
+  assert_contains "$out" "zzz  [thread:thread-z]  from zzz" "wrapper lists zzz candidate" || return 1
+  assert_file_missing "$AGENT_MESSAGE_DIR/log-bar.jsonl" || return 1
+
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg reply "ack" 2>&1 ); rc=$?
+  assert_eq "1" "$rc" "shell rejects ambiguous reply" || return 1
+  assert_contains "$out" "2 senders tie at newest ts=1700000000" "shell explains tie" || return 1
+  assert_contains "$out" "aaa  [thread:thread-a]  from aaa" "shell lists aaa candidate" || return 1
+  assert_contains "$out" "zzz  [thread:thread-z]  from zzz" "shell lists zzz candidate" || return 1
+  assert_file_missing "$AGENT_MESSAGE_DIR/log-bar.jsonl"
+}
+
+# One sender, two threads, same ts: NOT ambiguous — §5 makes the log single-writer
+# append-only, so the last line is the last arrival. Must reply, not refuse.
+test_reply_same_sender_same_second_uses_log_order() {
+  mkdir -p "$AGENT_MESSAGE_DIR"
+  printf '%s\n%s\n' \
+    '{"ts":1700000000,"from":"aaa","to":"bar","thread":"thread-1","body":"first"}' \
+    '{"ts":1700000000,"from":"aaa","to":"bar","thread":"thread-2","body":"second"}' \
+    > "$AGENT_MESSAGE_DIR/log-aaa.jsonl"
+
+  local out rc
+  out=$( cd "$TMP/bar" && printf 'ack' | "$WRAPPER" reply 2>&1 ); rc=$?
+  assert_eq "0" "$rc" "wrapper replies on same-sender tie" || return 1
+  assert_contains "$out" "bar→aaa thread=thread-2" "wrapper picks last line" || return 1
+
+  rm -f "$AGENT_MESSAGE_DIR/log-bar.jsonl"
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg reply "ack" 2>&1 ); rc=$?
+  assert_eq "0" "$rc" "shell replies on same-sender tie" || return 1
+  assert_contains "$out" "bar→aaa thread=thread-2" "shell picks last line"
+}
+
+# Newest ts wins over log filename order: aaa sorts first but is also newer.
+test_reply_picks_newest_ts_not_log_order() {
+  mkdir -p "$AGENT_MESSAGE_DIR"
+  printf '%s\n' '{"ts":1700000005,"from":"aaa","to":"bar","thread":"thread-a","body":"newer"}' \
+    > "$AGENT_MESSAGE_DIR/log-aaa.jsonl"
+  printf '%s\n' '{"ts":1700000000,"from":"zzz","to":"bar","thread":"thread-z","body":"older"}' \
+    > "$AGENT_MESSAGE_DIR/log-zzz.jsonl"
+
+  local out rc
+  out=$( cd "$TMP/bar" && printf 'ack' | "$WRAPPER" reply 2>&1 ); rc=$?
+  assert_eq "0" "$rc" "wrapper replies across logs" || return 1
+  assert_contains "$out" "bar→aaa thread=thread-a" "wrapper replies to newest sender" || return 1
+
+  rm -f "$AGENT_MESSAGE_DIR/log-bar.jsonl"
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg reply "ack" 2>&1 ); rc=$?
+  assert_eq "0" "$rc" "shell replies across logs" || return 1
+  assert_contains "$out" "bar→aaa thread=thread-a" "shell replies to newest sender"
+}
+
 test_wrapper_thread_override() {
   ( cd "$TMP/foo" && printf '[thread:custom-id]\nbody' | "$WRAPPER" send bar ) >/dev/null
   local thread
@@ -1580,6 +1645,9 @@ TESTS=(
   test_wrapper_dedup_synced_log
   test_wrapper_alias_traversal_blocked
   test_wrapper_thread_inheritance
+  test_reply_rejects_two_sender_same_second_tie
+  test_reply_same_sender_same_second_uses_log_order
+  test_reply_picks_newest_ts_not_log_order
   test_wrapper_thread_override
   test_wrapper_id_is_content_addressed
   test_wrapper_logs_already_returns_list

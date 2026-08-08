@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib, json, os, re, sys, time, unicodedata
 from pathlib import Path
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")  # C0 minus \t\n, plus DEL — display sanitizer
@@ -133,8 +133,19 @@ def reply(args: list[str]) -> None:
     d = D()
     mine = [m for _, m in iter_to(d, who)]
     if not mine: sys.exit("no inbox messages to reply to")
-    mine.sort(key=lambda m: m["ts"])
-    last = mine[-1]
+    newest_ts = max(m["ts"] for m in mine)
+    newest = [m for m in mine if m["ts"] == newest_ts]
+    # Only a cross-sender tie is unrecoverable: §5 makes each sender's log
+    # single-writer append-only, so line order within one log is arrival order.
+    targets = {m["from"]: m for m in newest}
+    if len(targets) > 1:
+        lines = [f"reply: {len(targets)} senders tie at newest ts={newest_ts}; refusing ambiguous reply"]
+        for frm, m in sorted(targets.items()):
+            first = _sane(m["body"].splitlines()[0][:80]) if m["body"] else ""
+            lines.append(f"  {frm}  [thread:{_sane(m['thread'])}]  {first}")
+        lines.append("pick one: send <alias>, body prefixed with the matching [thread:...] above")
+        sys.exit("\n".join(lines))
+    last = newest[-1]
     rec = write(d, who, last["from"], last["thread"], body)
     print(f"reply {who}→{last['from']} thread={_sane(last['thread'])} id={rec['id']}")
 

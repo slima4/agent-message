@@ -145,9 +145,10 @@ Modes other than `default` are SHOULD-implement, not MUST.
 To reply to the most recent message addressed to `<me>`:
 
 1. Scan as in §6 with watermark disabled, dedup by id.
-2. Filter `to == me`. Sort by `ts`. Pick the last record `last`.
-3. Build a new record with `from = me`, `to = last.from`, `thread = last.thread`, `body = <reply>`.
-4. Append per §5.
+2. Filter `to == me` and find the greatest `ts`. If every record at that `ts` has the same `from`, implementations MUST take the one appearing last in that sender's log as `last`. Per §5 the log is single-writer and append-only, so its line order is authoritative arrival order even when `ts` ties.
+3. If records at the greatest `ts` come from **different** senders, implementations MUST NOT guess a target: list the candidates and abort without writing. `ts` has one-second resolution and there is no cross-log ordering, so arrival order between two senders is unrecoverable; silently choosing one risks replying to the wrong conversation. The caller resolves the tie with `send <from>` and a `[thread:<thread>]` body prefix (§4.1).
+4. Build a new record with `from = me`, `to = last.from`, `thread = last.thread`, `body = <reply>`.
+5. Append per §5.
 
 ## 8. Sync semantics
 
@@ -173,6 +174,7 @@ A SAMP-conformant implementation SHOULD:
 
 - Support the `[thread:<id>]` override in §4.1.
 - Persist a watermark per §6 if it offers an "inbox" mode.
+- Follow §7 if it offers a "reply" operation — the tie rules there are MUST once reply exists, so that two implementations sharing a `$DIR` never disagree on the target.
 - Honour `AGENT_MESSAGE_DIR`.
 
 A SAMP-conformant implementation MAY:
@@ -197,7 +199,7 @@ This document specifies SAMP **v1**. Future versions, if any, will be additive: 
 
 Revisions within v1 (on-disk record format unchanged throughout):
 
-- **2026-08-08** — §4.1 control chars stripped from thread override, empty override falls back to §4.2; §6 watermark clock-capped with sender-scoped `"from:id"` ids, mtime cache gains total size, malformed records skipped on read; §8/§9 read-side dedup key scoped to `(from, id)`. Existing v1 logs need no migration; readers deduping by bare `id` should re-check §6/§9.
+- **2026-08-08** — §4.1 control chars stripped from thread override, empty override falls back to §4.2; §6 watermark clock-capped with sender-scoped `"from:id"` ids, mtime cache gains total size, malformed records skipped on read; §7 reply ties at the newest `ts` resolved by log line order within one sender, rejected across senders; §8/§9 read-side dedup key scoped to `(from, id)`. Existing v1 logs need no migration; readers deduping by bare `id` should re-check §6/§9.
 - **2026-04-25** — initial publication.
 
 ## 12. Implementations
