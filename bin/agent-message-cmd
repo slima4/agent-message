@@ -13,6 +13,11 @@ CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")  # C0 minus \t\n, plus DEL —
 # record: unbounded bodies would exhaust the reading agent's context. Every
 # elision is announced — a silently truncated body reads as an empty one.
 BUDGET = 8000
+# Largest body send/reply will write. Messages carry references, not payloads: a
+# body past this can't be consumed by a reading agent (it displays as one line
+# plus an elision) and taxes every future scan of the log, permanently — logs are
+# append-only. Tune here; keep in step with MSG_MAX_BODY in shell/msg.sh.
+MAX_BODY = 65536
 
 
 def D() -> Path:
@@ -45,6 +50,11 @@ def cid(m: dict) -> str:
 
 def _sane(s: str) -> str:
     return CTRL_RE.sub("", s)
+
+
+def _reject_oversize(body: str, op: str) -> None:
+    if len(body) > MAX_BODY:
+        sys.exit(f"{op}: body is {len(body)} chars, limit {MAX_BODY} — send a path or link instead")
 
 
 def thread_of(body: str, frm: str) -> tuple[str, str]:
@@ -123,6 +133,7 @@ def send(args: list[str]) -> None:
         sys.exit("send: pipe body via stdin, e.g. echo 'hi' | agent-message-cmd send <to>")
     # NFC before thread_of so slug (and therefore id) matches shell/msg.sh on non-NFC input.
     body = unicodedata.normalize("NFC", sys.stdin.read().rstrip("\n"))
+    _reject_oversize(body, "send")
     frm = me()
     thread, body = thread_of(body, frm)
     rec = write(D(), frm, to, thread, body)
@@ -134,6 +145,7 @@ def reply(args: list[str]) -> None:
     if sys.stdin.isatty():
         sys.exit("reply: pipe body via stdin, e.g. echo 'lgtm' | agent-message-cmd reply")
     body = sys.stdin.read().rstrip("\n")
+    _reject_oversize(body, "reply")
     d = D()
     mine = [m for _, m in iter_to(d, who)]
     if not mine: sys.exit("no inbox messages to reply to")

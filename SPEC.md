@@ -104,6 +104,7 @@ Implementations:
 - MUST NOT write to any log file other than their own (`log-<frm>.jsonl`).
 - MUST use append mode (`O_APPEND` semantics). With the single-writer invariant, no two appends ever race, so writes do not interleave regardless of message size.
 - SHOULD NOT lock — single-writer-per-file makes locking unnecessary.
+- SHOULD refuse to write a `body` beyond an implementation-defined maximum, and say so rather than failing obscurely. A message carries a reference, not a payload: logs are append-only, so one oversized record taxes every future scan permanently, and a reading agent cannot consume it anyway. The reference implementation uses 65536 characters. Readers MUST NOT apply this limit — a record already on disk is read normally whatever its size (§6).
 
 ## 6. Reading — inbox
 
@@ -170,6 +171,7 @@ A SAMP-conformant implementation MUST:
 - Append-only, single-writer-per-log-file in §5.
 - On read, dedup by `(from, id)` and filter by `to`.
 - Tolerate malformed records on read (skip, don't abort — §6.3).
+- Read records of any size, including ones larger than the writer-side maximum in §5.
 - Never present a truncated `body` without indicating the truncation. Display format is otherwise implementation-defined (§6.5), but a silently shortened body is indistinguishable from a short one, so a reader that elides without saying so misreports the message.
 
 A SAMP-conformant implementation SHOULD:
@@ -201,7 +203,7 @@ This document specifies SAMP **v1**. Future versions, if any, will be additive: 
 
 Revisions within v1 (on-disk record format unchanged throughout):
 
-- **2026-08-08** — §4.1 control chars stripped from thread override, empty override falls back to §4.2; §6 watermark clock-capped with sender-scoped `"from:id"` ids, mtime cache gains total size, malformed records skipped on read; §7 reply ties at the newest `ts` resolved by log line order within one sender, rejected across senders; §9 readers must not truncate a body silently; §8/§9 read-side dedup key scoped to `(from, id)`. Existing v1 logs need no migration; readers deduping by bare `id` should re-check §6/§9.
+- **2026-08-08** — §4.1 control chars stripped from thread override, empty override falls back to §4.2; §6 watermark clock-capped with sender-scoped `"from:id"` ids, mtime cache gains total size, malformed records skipped on read; §7 reply ties at the newest `ts` resolved by log line order within one sender, rejected across senders; §9 readers must not truncate a body silently and must read records of any size; §5 writers should refuse oversized bodies; §8/§9 read-side dedup key scoped to `(from, id)`. Existing v1 logs need no migration; readers deduping by bare `id` should re-check §6/§9.
 - **2026-04-25** — initial publication.
 
 ## 12. Implementations

@@ -16,6 +16,23 @@ Same reasoning. If you need encryption, encrypt the body yourself before sending
 
 Each alias writes to its own log file. With one writer per file, two appends never race — no locking needed and writes never interleave, regardless of message size.
 
+## Bodies are capped at 64 KiB
+
+`send` and `reply` refuse a body over 65536 characters:
+
+```
+send: body is 2097152 chars, limit 65536 — send a path or link instead
+```
+
+A message carries a *reference*, not a payload. Two reasons the cap is a feature:
+
+- **The recipient can't read it anyway.** Inbox output is budgeted, so a 2 MB body arrives as its first 80 characters plus `… +2097072 chars elided`. Pulling the rest means `inbox raw` and roughly 500k tokens of context.
+- **The cost is permanent.** Logs are append-only and `compact` only dedups — it never removes. One 2 MB record adds ~58 ms to *every* future read by *every* reader, and to every sync round, forever.
+
+Send `review /tmp/big-diff.txt` instead: 30 bytes, and the recipient opens the file with the tools it already has.
+
+To change the cap, edit `MAX_BODY` in `bin/agent-message-cmd` and `MSG_MAX_BODY` in `shell/msg.sh` (or export `MSG_MAX_BODY` for the shell path). Keep the two in step. Readers apply no limit — a large record already on disk, or written by another implementation, is read normally.
+
 ## No delivery guarantees
 
 Sender appends. Reader unions and filters. There is no ack, no retry, no delivery report. If the disk eats your file, the message is gone.

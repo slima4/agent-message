@@ -380,6 +380,72 @@ test_inbox_empty_body_marked() {
   assert_not_contains "$out" "elided" "empty body is not an elision"
 }
 
+# Writers cap the body; readers never do. Before the cap, the shell path died at
+# ARG_MAX with a raw "Argument list too long" from the python3 spawn while the
+# wrapper happily wrote multi-MB records nobody could read. (#9)
+test_send_refuses_oversized_body() {
+  local big; big=$(python3 -c "print('x'*(2*1024*1024), end='')")
+  local out rc
+  out=$( cd "$TMP/foo" && printf '%s' "$big" | "$WRAPPER" send bar 2>&1 ); rc=$?
+  assert_eq "1" "$rc" "wrapper send refuses oversized body" || return 1
+  assert_contains "$out" "limit 65536" "wrapper names the limit" || return 1
+  assert_contains "$out" "send a path or link instead" "wrapper names the alternative" || return 1
+  assert_file_missing "$AGENT_MESSAGE_DIR/log-foo.jsonl" || return 1
+
+  # The shell must trip its own check before the exec, not surface E2BIG.
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/foo" && msg send bar "$big" 2>&1 ); rc=$?
+  assert_eq "2" "$rc" "shell send refuses oversized body" || return 1
+  assert_contains "$out" "limit 65536" "shell names the limit" || return 1
+  assert_not_contains "$out" "Argument list too long" "shell check precedes the exec" || return 1
+  assert_file_missing "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+}
+
+test_reply_refuses_oversized_body() {
+  ( cd "$TMP/foo" && echo "ping" | "$WRAPPER" send bar ) >/dev/null
+  local big; big=$(python3 -c "print('x'*(2*1024*1024), end='')")
+  local out rc
+  out=$( cd "$TMP/bar" && printf '%s' "$big" | "$WRAPPER" reply 2>&1 ); rc=$?
+  assert_eq "1" "$rc" "wrapper reply refuses oversized body" || return 1
+  assert_contains "$out" "limit 65536" "wrapper reply names the limit" || return 1
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg reply "$big" 2>&1 ); rc=$?
+  assert_eq "2" "$rc" "shell reply refuses oversized body" || return 1
+  assert_not_contains "$out" "Argument list too long" "shell reply check precedes the exec" || return 1
+  assert_file_missing "$AGENT_MESSAGE_DIR/log-bar.jsonl"
+}
+
+test_body_limit_boundary_is_exact() {
+  local at over
+  at=$(python3 -c "print('a'*65536, end='')")
+  over=$(python3 -c "print('a'*65537, end='')")
+  local out rc
+  out=$( cd "$TMP/foo" && printf '%s' "$at" | "$WRAPPER" send bar 2>&1 ); rc=$?
+  assert_eq "0" "$rc" "exactly at the limit is accepted" || return 1
+  assert_contains "$out" "sent foo" "at-limit send succeeds" || return 1
+  out=$( cd "$TMP/foo" && printf '%s' "$over" | "$WRAPPER" send bar 2>&1 ); rc=$?
+  assert_eq "1" "$rc" "one char over is refused" || return 1
+  assert_contains "$out" "body is 65537 chars" "error reports the actual size"
+}
+
+# Readers apply no cap: a record written by another impl, or by hand, is read
+# whatever its size — only the display budget bounds what is printed.
+test_reader_accepts_oversized_record() {
+  mkdir -p "$AGENT_MESSAGE_DIR"
+  python3 - "$AGENT_MESSAGE_DIR" <<'PY'
+import json, os, sys, time
+d = sys.argv[1]
+rec = {"ts": int(time.time()), "from": "foo", "to": "bar",
+       "thread": "huge", "body": "H" + "x" * (200 * 1024)}
+with open(os.path.join(d, "log-foo.jsonl"), "w", encoding="utf-8") as f:
+    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+  local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "1 new from: foo" "reader shows the oversized record" || return 1
+  assert_contains "$out" "chars elided" "reader elides rather than refusing" || return 1
+  assert_not_contains "$out" "limit 65536" "reader does not apply the writer cap"
+}
+
 test_wrapper_thread_override() {
   ( cd "$TMP/foo" && printf '[thread:custom-id]\nbody' | "$WRAPPER" send bar ) >/dev/null
   local thread
@@ -1835,6 +1901,10 @@ TESTS=(
   test_inbox_budget_bounds_total_output
   test_inbox_all_mode_shows_full_body
   test_inbox_budget_favours_newest
+  test_send_refuses_oversized_body
+  test_reply_refuses_oversized_body
+  test_body_limit_boundary_is_exact
+  test_reader_accepts_oversized_record
   test_inbox_count_bounded_reread
   test_inbox_count_rejects_zero
   test_inbox_count_rejects_non_ascii_digits

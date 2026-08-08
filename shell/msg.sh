@@ -25,6 +25,14 @@
 # $DIR/log-<alias>.jsonl (single-writer, no interleave). Readers union across
 # log-*.jsonl and dedup by (from, content-addressed id).
 
+# Largest body send/reply will write. Messages carry references, not payloads: a
+# body past this can't be consumed by a reading agent and taxes every future scan
+# of the log, permanently — logs are append-only. Checked before the python3 spawn,
+# so an oversized body reports this rather than the shell's raw "Argument list too
+# long". Tune here or export MSG_MAX_BODY; keep in step with MAX_BODY in
+# bin/agent-message-cmd.
+: "${MSG_MAX_BODY:=65536}"
+
 msg() {
   local dir="${AGENT_MESSAGE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agent-message}"
   local me="" line
@@ -59,7 +67,11 @@ msg() {
       local to="$1"; shift
       case "$to" in ''|*[!A-Za-z0-9._-]*|[!A-Za-z0-9]*) echo "msg send: recipient alias '$to' fails SAMP §1 alias regex" >&2; return 2 ;; esac
       if [ ${#to} -gt 64 ]; then echo "msg send: recipient alias '$to' fails SAMP §1 alias regex" >&2; return 2; fi
-      MSG_ME="$me" MSG_TO="$to" MSG_BODY="$*" MSG_DIR="$dir" python3 - <<'PY'
+      local body="$*"
+      if [ ${#body} -gt "$MSG_MAX_BODY" ]; then
+        echo "msg send: body is ${#body} chars, limit $MSG_MAX_BODY — send a path or link instead" >&2; return 2
+      fi
+      MSG_ME="$me" MSG_TO="$to" MSG_BODY="$body" MSG_DIR="$dir" python3 - <<'PY'
 import json, os, time, re, datetime, hashlib, unicodedata
 from pathlib import Path
 me=os.environ["MSG_ME"]; to=os.environ["MSG_TO"]
@@ -86,7 +98,11 @@ PY
       ;;
     reply)
       if [ $# -lt 1 ]; then echo "usage: msg reply <body...>" >&2; return 2; fi
-      MSG_ME="$me" MSG_BODY="$*" MSG_DIR="$dir" python3 - <<'PY'
+      local body="$*"
+      if [ ${#body} -gt "$MSG_MAX_BODY" ]; then
+        echo "msg reply: body is ${#body} chars, limit $MSG_MAX_BODY — send a path or link instead" >&2; return 2
+      fi
+      MSG_ME="$me" MSG_BODY="$body" MSG_DIR="$dir" python3 - <<'PY'
 import json, os, re, sys, time, hashlib, unicodedata
 from pathlib import Path
 me=os.environ["MSG_ME"]; body=unicodedata.normalize("NFC", os.environ["MSG_BODY"]); d=Path(os.environ["MSG_DIR"])
