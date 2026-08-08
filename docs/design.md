@@ -54,13 +54,30 @@ skip if  from:id ∈ watermark.ids
 
 `ts` is capped at the reader's own clock, so a sender ahead of it can't advance the watermark past honest senders — its already-shown messages ride in `ids` (every shown record with `ts >=` the cap) until the clock catches up. Same-second bursts work the same way: the new message's id isn't in the prior watermark, so it shows.
 
+## Line order is arrival order — within one log
+
+`reply` targets the most recent message addressed to you. At 1-second `ts` resolution, two messages can tie, and the tie splits two ways:
+
+- **Same sender.** Not ambiguous. §5 makes each log single-writer and append-only, so the later line *is* the later arrival. `reply` takes the last one and says nothing.
+- **Different senders.** Unrecoverable. There is no cross-log ordering — nothing in the format says whether `log-aaa.jsonl`'s record or `log-zzz.jsonl`'s came first. `reply` lists the candidates and refuses.
+
+The earlier implementation scanned logs in sorted filename order and let Python's stable sort settle it, so a two-peer tie silently replied to whichever sender sorted last alphabetically. Deterministic and meaningless. Refusing is the honest answer: pick with `send <from>` and a `[thread:…]` prefix.
+
+## Bounded output, announced elisions
+
+Two separate bounds, because two different things can blow up.
+
+**Body bytes per read** — 8000, spent newest-first, so a long archive funds recent messages rather than ancient ones. Past the budget a message shows its first line plus `… +N chars elided`. The rule is that a shortened body always says so: a silently truncated body is indistinguishable from a short one, and a reader that elides quietly misreports the message. SAMP §9 makes that a MUST.
+
+**Body size at write** — 64 KiB, refused with the alternative named. Messages carry references, not payloads. Logs are append-only and `compact` only dedups, so one oversized record taxes every future read permanently — and the recipient can't consume it anyway, since the display budget elides it. Writers cap (§5 SHOULD); readers never do (§9 MUST read any size), so a record another implementation wrote stays readable.
+
 ## Plumbing + porcelain split
 
 Like git's `cat-file` / `ls-tree` / `mktree` (plumbing) vs `add` / `commit` / `log` (porcelain).
 
 | Porcelain | Plumbing |
 |---|---|
-| `msg`, `msg send`, `msg reply`, `msg tail` | `msg cat`, `msg log`, `msg raw`, `msg compact` |
+| `msg`, `msg <n>`, `msg all`, `msg send`, `msg reply`, `msg tail` | `msg cat`, `msg log`, `msg raw`, `msg compact` |
 
 Porcelain is for humans; plumbing is for scripts and forensic spelunking. Slash commands (Claude Code) are porcelain only — keeping the per-invocation prompt small.
 

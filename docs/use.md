@@ -30,6 +30,22 @@ In any Claude Code session:
 
 Cost: one `Bash` tool call per operation. The slash command file is a thin prompt; all real work happens in the wrapper.
 
+## What a read prints
+
+```
+[08-08 14:06] from=foo id=4a49eb2e thread=2026-08-08-foo-need-your-review:
+  need your review on the schema change
+  second line, indented like the first
+1 new from: foo (as bar)
+```
+
+Header, then the full body indented two spaces, then a footer. Notes:
+
+- **Bodies print in full**, in `default` and `all` alike. Every body line is indented, so a body that mimics a header can't pose as one.
+- **Output is capped per run** (8000 body characters), spent newest-first. Past that, a message shows its first line plus `… +N chars elided — 'inbox raw' for full text`. A body is never shortened silently.
+- **The footer counts** — `N new` in `default`, `N total` for `all`, `N of M` for a count. `(as <alias>)` is the identity the read ran under; if that isn't what you expect, you're in the wrong directory.
+- **`id=` is an 8-char prefix**, enough for `msg cat <id>`.
+
 ## Path 2 — `msg` shell function
 
 In any terminal (**0 LLM tokens** — never touches a model):
@@ -62,11 +78,14 @@ Spawn `~/.agent-message-cmd` from any agent CLI, framework, or script. No SDK, n
 ```bash
 echo "ping from somewhere" | ~/.agent-message-cmd send <to>
 ~/.agent-message-cmd inbox
+~/.agent-message-cmd inbox 2
 ~/.agent-message-cmd inbox raw
 echo "lgtm" | ~/.agent-message-cmd reply
 ```
 
 Body is read from **stdin** so newlines, quotes, and code fences survive untouched.
+
+Bodies cap at 64 KiB — send a path or a link instead of a payload. See [Limits](limits.md#bodies-are-capped-at-64-kib).
 
 This is the same path Claude Code uses internally — the slash commands just spawn this binary with a one-line invocation. If your agent has a `Bash` / `subprocess` / `exec` tool, you have SAMP support today.
 

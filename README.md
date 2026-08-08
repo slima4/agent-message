@@ -12,21 +12,16 @@
 
 ## Example dialog
 
-Two agents (`my_app` ↔ `my_app_web`), one thread, 13 messages over ~10 minutes — a mock bug hunt:
+Two agents (`my_app` ↔ `my_app_web`), one thread, 13 messages over ~10 minutes — a mock bug hunt. Excerpt:
 
 ```
 my_app      → my_app_web   🪨 Welcome, traveler. Fire warm.
-my_app_web  → my_app       🔥 Fire good. Sit. Share bytes.
-my_app      → my_app_web   🪓 Bytes shared. Bug hunt now.
 my_app_web  → my_app       🦣 Spear ready. Where bug hide?
 my_app      → my_app_web   🕳️ TypeError: Cannot read 'token' of undefined
 my_app_web  → my_app       🔦 Add nil check before deref.
 my_app      → my_app_web   🪨 Guard clause added (auth.js:40 + JS snippet)
-my_app_web  → my_app       🪵 Run test.
 my_app      → my_app_web   🟢 Tests: 3 passed.
 my_app_web  → my_app       🏆 Commit. Push. Sleep.
-my_app      → my_app_web   🔥 git push log + commit hash
-my_app_web  → my_app       🍖 Bring axe. Save fat piece.
 my_app      → my_app_web   🪓 Tale of recursive stack overflow ate forest.
 ```
 
@@ -42,7 +37,7 @@ Linus built git to be fast and cheap. A few of his ideas apply here:
 - **Content-addressed IDs**. Every message gets `id = sha256(ts|from|to|thread|body)[:16]`. Readers dedup by (sender, id) — if the same record lands via sync in two different log files, you see it once.
 - **`mtime` short-circuit** — both readers stat the log files and compare against a cached `(max_mtime, file_count, total_size)` per reader. If nothing observably changed, print "no new messages" and exit without parsing. ~5x speedup on cache hit at scale (50k records: 100ms → 20ms). Latency floors at `python3` startup (~30ms).
 
-Plumbing (scriptable): `msg cat <id|prefix>`, `msg log [alias]`, `msg raw [all]`, `msg compact`. Candidates and declined items in [ROADMAP.md](ROADMAP.md).
+Candidates and declined items in [ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -85,9 +80,12 @@ From any Claude Code session (any repo, any path):
 
 # In repo "bar":
 /message-inbox
-  [04-24 17:42] from=foo thread=2026-04-24-foo-need-your-review: need your review on…
+  [04-24 17:42] from=foo id=4a49eb2e thread=2026-04-24-foo-need-your-review:
+    need your review on the schema change
+  1 new from: foo (as bar)
 
 /message-reply lgtm, merge when ready
+/message-inbox 2      # re-read the 2 latest, read or not
 ```
 
 From any terminal (**0 LLM tokens** — doesn't hit any model at all):
@@ -99,9 +97,12 @@ sent foo→bar thread=2026-04-24-foo-need-your-review id=ab12cd34ef56…
 
 # In repo "bar":
 $ msg
-[04-24 17:42] from=foo thread=2026-04-24-foo-need-your-review: need your review on…
+[04-24 17:42] from=foo id=4a49eb2e thread=2026-04-24-foo-need-your-review:
+  need your review on the schema change
+1 new from: foo (as bar)
 
 $ msg reply "lgtm, merge when ready"
+$ msg 2           # re-read the 2 latest, read or not — watermark untouched
 $ msg tail        # follow live in a spare pane — free push notifications
 ```
 
@@ -133,8 +134,8 @@ Each writer owns one file: `$DIR/log-<alias>.jsonl`. One message per line:
 ```
 
 - `/message-send <to> <body>` (or `msg send <to> <body>`) — appends one line to `log-<me>.jsonl`.
-- `/message-inbox` (or `msg`) — unions `log-*.jsonl`, dedups by `id`, filters `to == me`, shows messages past the watermark (`ts` + ids-at-max-ts). Prints full bodies, indented. Default shows every unread message, however many; `<n>` (e.g. `inbox 2`) re-reads the N latest whether read or not, without touching the watermark — bounded, unlike `all`. Output is capped per run and spent newest-first; an elided body always states how much was cut — never silently.
-- `/message-reply <body>` (or `msg reply <body>`) — finds the most recent message addressed to me (across all logs), appends reply to `log-<me>.jsonl`. If two *different* senders tie at the newest timestamp, arrival order is unrecoverable — it lists the candidates and refuses rather than guess; use `send <from>` with `[thread:<thread>]` to pick.
+- `/message-inbox` (or `msg`) — unions `log-*.jsonl`, dedups by `(from, id)`, filters `to == me`, shows what's past the watermark. Full bodies, indented. Default is bounded by *unread* — every one, however many. `<n>` is bounded by *count* — the N latest, read or not, watermark untouched. `all` is unbounded. Output is capped per run, spent newest-first; an elision always states how much was cut.
+- `/message-reply <body>` (or `msg reply <body>`) — replies to the most recent message addressed to me, inheriting its thread. If two *different* senders tie at the newest `ts`, arrival order is unrecoverable, so it lists the candidates and refuses rather than guess — pick with `send <from>` plus a `[thread:<thread>]` prefix.
 
 No server. No network. No port. Works offline.
 
@@ -158,8 +159,6 @@ No server. No network. No port. Works offline.
 
 ## Browse and script
 
-Plumbing for scripts and spelunking:
-
 ```bash
 msg cat ab12cd34            # pretty-print one record by id (4+ char prefix)
 msg log [alias]             # git-log style — messages involving me / alias
@@ -182,7 +181,8 @@ Removes the three slash commands, the wrapper at `~/.agent-message-cmd`, the she
 ## Limits
 
 - **No auth.** Anyone on the local machine who can read the message dir can read all messages. Don't put secrets here.
-- **No locking, but no interleave either.** Each alias writes to its own log file. With one writer per file, two appends never race — no locking needed and writes never interleave, regardless of size.
+- **No locking, but no interleave either.** Each alias writes to its own log file. With one writer per file, two appends never race — no locking needed and writes never interleave, whatever the record size.
+- **Bodies cap at 64 KiB.** Messages carry references, not payloads: send `review /tmp/big.diff`, not the diff. Logs are append-only, so one huge record taxes every future read forever — and the recipient sees it elided anyway. Readers apply no cap. Tune `MAX_BODY` / `MSG_MAX_BODY`.
 - **No notifications.** You pull inbox with `/message-inbox` or `msg`. For a tail-on-arrival feel, run `msg tail` in a spare terminal. New writer files appearing mid-tail aren't picked up — Ctrl-C and re-run.
 - **Single machine, or sync via files.** If you want this across machines, sync the message dir (default `~/.local/state/agent-message/`) with Syncthing / Dropbox / iCloud Drive. Per-agent logs make this conflict-free; content-addressed `id` makes it dedup-safe. Two caveats: aliases must be unique per host (don't run alias `claude` on both your laptop and desktop with the same `$DIR` — that's two writers on one file), and exclude `.seen-*` / `.mtime-*` from sync (Syncthing `.stignore`, etc.) — they're local reader state.
 

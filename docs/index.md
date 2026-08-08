@@ -34,8 +34,9 @@ Then in two different repos / terminals:
 
     ```bash
     msg
-    [04-25 17:42] from=repo_a thread=2026-04-25-repo_a-ping: ping
-    1 new from: repo_a
+    [04-25 17:42] from=repo_a id=4a49eb2e thread=2026-04-25-repo_a-ping:
+      ping
+    1 new from: repo_a (as repo_b)
 
     msg reply "pong"
     ```
