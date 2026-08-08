@@ -20,6 +20,7 @@ description: agent-message protocol — cross-agent messaging via local JSONL lo
 alwaysApply: false
 ---
 
+<!-- >>> agent-message >>> -->
 When the user asks to send/check/reply to messages from other AI agents (Claude, opencode, Cursor, etc.), use the `~/.agent-message-cmd` wrapper:
 
 - Send: `echo '<body>' | ~/.agent-message-cmd send <recipient-alias>`
@@ -28,6 +29,7 @@ When the user asks to send/check/reply to messages from other AI agents (Claude,
 
 Sender alias = `basename $(pwd)`, override via `.agent-message` file's first line.
 Spec: SAMP v1 — https://github.com/slima4/agent-message/blob/main/SPEC.md
+<!-- <<< agent-message <<< -->
 ```
 
 ## Verify
@@ -44,7 +46,7 @@ Agent should run `~/.agent-message-cmd inbox` and print the output.
 ./install.sh --integrate=cursor --uninstall
 ```
 
-Removes `~/.cursor/rules/agent-message.mdc`.
+Removes only the generated marker block from `~/.cursor/rules/agent-message.mdc`, preserving any user-authored content. The file is removed when nothing remains.
 
 ## Caveats
 

@@ -63,7 +63,7 @@ while [[ $# -gt 0 ]]; do
     --integrate=*) INTEGRATE="${1#*=}";;
     --uninstall) UNINSTALL=1;;
     -h|--help)
-      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *) echo "unknown option: $1" >&2; exit 2;;
   esac
@@ -78,37 +78,80 @@ fi
 CMDS=(message-send.md message-inbox.md message-reply.md)
 SHELL_SRC="$SCRIPT_DIR/shell/msg.sh"
 BIN_SRC="$SCRIPT_DIR/bin/agent-message-cmd"
-MARKER_BEGIN="# >>> agent-message >>>"
-MARKER_END="# <<< agent-message <<<"
 
 strip_rc_block() {
   local rc="$1"
   [[ -f "$rc" ]] || return 0
   python3 - "$rc" <<'PY'
-import sys, re
+import errno, os, re, sys
 p = sys.argv[1]
-with open(p) as f: s = f.read()
-# Replace the matched (including one leading \n) with a single \n to preserve surrounding
-# content separation; then drop that leading \n iff the original file did not start with one.
-s2 = re.sub(r"(?:^|\n)# >>> agent-message >>>.*?# <<< agent-message <<<\n?", "\n", s, flags=re.DOTALL)
-if s2 != s:
-    if not s.startswith("\n"):
-        s2 = s2.lstrip("\n")
-    with open(p, "w") as f: f.write(s2)
+PAT = re.compile(
+    rb"(?:^|\n)# >>> agent-message >>>\n.*?# <<< agent-message <<<\n?",
+    re.DOTALL,
+)
+
+try:
+    fd = os.open(p, os.O_RDWR | os.O_NOFOLLOW)
+except FileNotFoundError:
+    sys.exit(0)
+except OSError as e:
+    if e.errno in (errno.ELOOP, errno.EMLINK):
+        print(f"  refusing to follow symlink at {p}", file=sys.stderr)
+        sys.exit(0)
+    raise
+
+with os.fdopen(fd, "r+b", closefd=True) as f:
+    s = f.read()
+    s2 = PAT.sub(b"", s)
+    if s2 != s:
+        f.seek(0)
+        f.write(s2)
+        f.truncate()
 PY
 }
 
 inject_rc_block() {
   local rc="$1" dst="$2"
   [[ -f "$rc" ]] || return 0
-  if grep -qF "$MARKER_BEGIN" "$rc"; then
-    return 0
-  fi
-  {
-    printf '\n%s\n' "$MARKER_BEGIN"
-    printf '[ -f "%s" ] && source "%s"\n' "$dst" "$dst"
-    printf '%s\n' "$MARKER_END"
-  } >> "$rc"
+  python3 - "$rc" "$dst" <<'PY'
+import errno, os, re, sys
+p, dst = sys.argv[1], sys.argv[2]
+dst_b = os.fsencode(dst)
+block = (
+    b"\n# >>> agent-message >>>\n"
+    + b'[ -f "' + dst_b + b'" ] && source "' + dst_b + b'"\n'
+    + b"# <<< agent-message <<<\n"
+)
+PAT = re.compile(
+    rb"(?:^|\n)# >>> agent-message >>>\n.*?# <<< agent-message <<<\n?",
+    re.DOTALL,
+)
+
+try:
+    fd = os.open(p, os.O_RDWR | os.O_NOFOLLOW)
+except FileNotFoundError:
+    sys.exit(0)
+except OSError as e:
+    if e.errno in (errno.ELOOP, errno.EMLINK):
+        print(f"  refusing to follow symlink at {p}", file=sys.stderr)
+        sys.exit(0)
+    raise
+
+with os.fdopen(fd, "r+b", closefd=True) as f:
+    s = f.read()
+    matches = list(PAT.finditer(s))
+    if len(matches) == 1 and matches[0].group() == block:
+        sys.exit(0)
+    if matches:
+        first = matches[0]
+        tail = PAT.sub(b"", s[first.end():])
+        s2 = s[:first.start()] + block + tail
+    else:
+        s2 = s + block
+    f.seek(0)
+    f.write(s2)
+    f.truncate()
+PY
 }
 
 expand_integrations() {
@@ -133,18 +176,31 @@ expand_integrations() {
   esac
 }
 
-integrate_cursor() {
-  local dst="$HOME/.cursor/rules/agent-message.mdc"
-  if [[ -L "$dst" ]]; then
-    echo "  cursor:   refusing to follow symlink at $dst" >&2
-    return 0
-  fi
-  if [[ -f "$dst" ]] && ! grep -qF "agent-message protocol — cross-agent messaging" "$dst"; then
-    echo "  cursor:   $dst exists with non-agent-message content; skipping" >&2
-    return 0
-  fi
-  mkdir -p "$(dirname "$dst")"
-  cat > "$dst" <<'CURSOR'
+cursor_block() {
+  cat <<'CURSOR'
+---
+description: agent-message protocol — cross-agent messaging via local JSONL logs
+alwaysApply: false
+---
+
+<!-- >>> agent-message >>> -->
+When the user asks to send/check/reply to messages from other AI agents (Claude, opencode, Cursor, etc.), use the `~/.agent-message-cmd` wrapper:
+
+- Send: `echo '<body>' | ~/.agent-message-cmd send <recipient-alias>`
+- Check inbox: `~/.agent-message-cmd inbox`
+- Reply to last: `echo '<body>' | ~/.agent-message-cmd reply`
+
+Sender alias = `basename $(pwd)`, override via `.agent-message` file's first line.
+Spec: SAMP v1 — https://github.com/slima4/agent-message/blob/main/SPEC.md
+<!-- <<< agent-message <<< -->
+CURSOR
+}
+
+# The original Cursor integration owned the entire file and had no markers.
+# Migrate it only when it is byte-for-byte unchanged; a modified legacy file is
+# user-owned and must not be overwritten or removed.
+legacy_cursor_block() {
+  cat <<'CURSOR'
 ---
 description: agent-message protocol — cross-agent messaging via local JSONL logs
 alwaysApply: false
@@ -159,11 +215,52 @@ When the user asks to send/check/reply to messages from other AI agents (Claude,
 Sender alias = `basename $(pwd)`, override via `.agent-message` file's first line.
 Spec: SAMP v1 — https://github.com/slima4/agent-message/blob/main/SPEC.md
 CURSOR
-  echo "  cursor:   $dst"
+}
+
+integrate_cursor() {
+  local dst="$HOME/.cursor/rules/agent-message.mdc" parent expected legacy rc=0
+  parent=$(dirname "$dst")
+  if [[ -L "$parent" ]]; then
+    echo "  cursor:   refusing — $parent is a symlink" >&2
+    return 0
+  fi
+  mkdir -p "$parent"
+  expected=$(cursor_block)
+  legacy=$(legacy_cursor_block)
+  python3 - "$dst" "$expected" "$legacy" <<'PY' || rc=$?
+import errno, os, sys
+p = sys.argv[1]
+expected = os.fsencode(sys.argv[2]) + b"\n"
+legacy = os.fsencode(sys.argv[3])
+
+try:
+    fd = os.open(p, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+except OSError as e:
+    if e.errno in (errno.ELOOP, errno.EMLINK):
+        print(f"  cursor:   refusing to follow symlink at {p}", file=sys.stderr)
+        sys.exit(1)
+    raise
+
+with os.fdopen(fd, "r+b", closefd=True) as f:
+    s = f.read()
+    if expected[:-1] in s:
+        sys.exit(2)
+    if s and s not in (legacy, legacy + b"\n"):
+        sys.exit(3)
+    f.seek(0)
+    f.write(expected)
+    f.truncate()
+PY
+  case $rc in
+    0) echo "  cursor:   $dst";;
+    2) echo "  cursor:   $dst (already integrated)";;
+    3) echo "  cursor:   $dst exists with non-agent-message content; skipping" >&2;;
+  esac
 }
 
 uninstall_cursor() {
-  rm -f "$HOME/.cursor/rules/agent-message.mdc"
+  local expected; expected=$(cursor_block)
+  strip_marker_block "$HOME/.cursor/rules/agent-message.mdc" "$expected"
 }
 
 # Canonical marker block — single source of truth shared by all per-repo integrations.
@@ -262,18 +359,72 @@ emit_marker_status() {
 strip_marker_block() {
   local dst="$1"
   [[ -f "$dst" ]] || return 0
-  local expected; expected=$(marker_block)
+  local expected="${2-}"
+  [[ -n "$expected" ]] || expected=$(marker_block)
   python3 - "$dst" "$expected" <<'PY'
-import sys, os
-p, expected = sys.argv[1], sys.argv[2]
-with open(p) as f: s = f.read()
-if expected not in s:
+import errno, os, stat, sys
+p = sys.argv[1]
+expected = os.fsencode(sys.argv[2])
+# marker_block deliberately starts with a newline so install can append it to
+# any existing file. Search for the semantic block itself, then remove at most
+# the one separator newline on each side that belongs to the installed copy.
+core = expected[1:] if expected.startswith(b"\n") else expected
+
+try:
+    fd = os.open(p, os.O_RDWR | os.O_NOFOLLOW)
+except FileNotFoundError:
     sys.exit(0)
-s2 = s.replace(expected, "", 1).strip()
-if s2:
-    with open(p, "w") as f: f.write(s2 + "\n")
-else:
-    os.unlink(p)
+except OSError as e:
+    if e.errno in (errno.ELOOP, errno.EMLINK):
+        print(f"  refusing to follow symlink at {p}", file=sys.stderr)
+        sys.exit(0)
+    raise
+
+with os.fdopen(fd, "r+b", closefd=True) as f:
+    before = os.fstat(f.fileno())
+    s = f.read()
+    ranges = []
+    pos = 0
+    while True:
+        found = s.find(core, pos)
+        if found < 0:
+            break
+        end = found + len(core)
+        line_start = found == 0 or s[found - 1:found] == b"\n"
+        line_end = end == len(s) or s[end:end + 1] == b"\n"
+        if line_start and line_end:
+            start = found - 1 if found > 0 else found
+            end += 1 if end < len(s) else 0
+            ranges.append((start, end))
+        pos = found + len(core)
+
+    # Adjacent manually duplicated blocks can share a separator newline.
+    # Merge their removal spans before rebuilding the untouched user bytes.
+    merged = []
+    for start, end in ranges:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    s2 = s
+    for start, end in reversed(merged):
+        s2 = s2[:start] + s2[end:]
+    if s2 == s:
+        sys.exit(0)
+    if s2:
+        f.seek(0)
+        f.write(s2)
+        f.truncate()
+        sys.exit(0)
+
+    # Only unlink the pathname if it still names the inode opened with
+    # O_NOFOLLOW. If it changed underneath us, leave the replacement alone.
+    try:
+        current = os.stat(p, follow_symlinks=False)
+    except FileNotFoundError:
+        sys.exit(0)
+    if stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == (before.st_dev, before.st_ino):
+        os.unlink(p)
 PY
 }
 
@@ -401,6 +552,41 @@ run_uninstall_integrate() {
   done
 }
 
+# Copy through a same-directory temporary file, then atomically replace the
+# final directory entry. os.replace() replaces destination symlinks themselves,
+# including symlinks to directories; `mv` would follow a directory symlink.
+install_file() {
+  local src="$1" dst="$2" mode="$3" preserve_mode="${4:-0}" parent tmp
+  parent=$(dirname "$dst")
+  mkdir -p "$parent"
+  if [[ -d "$dst" && ! -L "$dst" ]]; then
+    echo "refusing to replace directory with file: $dst" >&2
+    return 1
+  fi
+  if [[ "$preserve_mode" -eq 1 ]]; then
+    mode=$(python3 - "$dst" "$mode" <<'PY'
+import os, stat, sys
+p, fallback = sys.argv[1], sys.argv[2]
+try:
+    current = os.stat(p, follow_symlinks=False)
+except FileNotFoundError:
+    print(fallback)
+else:
+    print(oct(stat.S_IMODE(current.st_mode))[2:] if stat.S_ISREG(current.st_mode) else fallback)
+PY
+)
+  fi
+  tmp=$(mktemp "$parent/.agent-message-install.XXXXXX")
+  if ! cp "$src" "$tmp" || ! chmod "$mode" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! python3 -c 'import os,sys; os.replace(sys.argv[1], sys.argv[2])' "$tmp" "$dst"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 if [[ "$UNINSTALL" -eq 1 ]]; then
   if [[ -n "$INTEGRATE" ]]; then
     # Partial: integrations only. Leave main install alone.
@@ -433,7 +619,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   echo "  removed: $MSG_DIR/{log-*.jsonl,.seen-*,.mtime-*} (dir removed if empty)"
   echo "  removed: $BIN_DST"
   echo "  removed: $SHELL_DST (and rc source blocks)"
-  echo "  removed: ~/.cursor/rules/agent-message.mdc (if present)"
+  echo "  removed: ~/.cursor/rules/agent-message.mdc marker block (file removed if empty)"
   echo "  removed: ~/.copilot/copilot-instructions.md marker block (if present)"
   echo "  removed: ~/.gemini/AGENTS.md marker block (if present)"
   echo "  removed: ~/.codex/AGENTS.md marker block (if present)"
@@ -445,7 +631,12 @@ fi
 
 mkdir -p "$COMMANDS_DIR"
 mkdir -p "$MSG_DIR"
-chmod 0755 "$MSG_DIR"
+# Existing private directories (for example mode 0700) are already usable and
+# must stay private. Add only missing owner permissions instead of resetting
+# group/other bits to 0755.
+if [[ ! -r "$MSG_DIR" || ! -w "$MSG_DIR" || ! -x "$MSG_DIR" ]]; then
+  chmod u+rwx "$MSG_DIR"
+fi
 
 for f in "${CMDS[@]}"; do
   src="$SCRIPT_DIR/commands/$f"
@@ -453,16 +644,16 @@ for f in "${CMDS[@]}"; do
     echo "missing source file: $src" >&2
     exit 1
   fi
-  cp "$src" "$COMMANDS_DIR/$f"
+  # `cp` historically preserved the mode of an existing regular command file.
+  # Keep that contract while new files and symlink replacements default to 0644.
+  install_file "$src" "$COMMANDS_DIR/$f" 0644 1
 done
 
 if [[ ! -f "$BIN_SRC" ]]; then
   echo "missing wrapper: $BIN_SRC" >&2
   exit 1
 fi
-mkdir -p "$(dirname "$BIN_DST")"
-cp "$BIN_SRC" "$BIN_DST"
-chmod 0755 "$BIN_DST"
+install_file "$BIN_SRC" "$BIN_DST" 0755
 
 SHELL_NOTE=""
 if [[ "$INSTALL_SHELL" -eq 1 ]]; then
@@ -470,9 +661,7 @@ if [[ "$INSTALL_SHELL" -eq 1 ]]; then
     echo "missing shell helper: $SHELL_SRC" >&2
     exit 1
   fi
-  mkdir -p "$(dirname "$SHELL_DST")"
-  cp "$SHELL_SRC" "$SHELL_DST"
-  chmod 0644 "$SHELL_DST"
+  install_file "$SHELL_SRC" "$SHELL_DST" 0644
   for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
     inject_rc_block "$rc" "$SHELL_DST"
   done

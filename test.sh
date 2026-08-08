@@ -749,6 +749,38 @@ test_install_integrate_cursor() {
   assert_file_exists "$fake_home/.claude/commands/message-send.md"
 }
 
+test_install_uninstall_cursor_preserves_user_content() {
+  local fake_home="$TMP/cursor-user-home"
+  _iargs "$fake_home"
+  local args=( "${_IARGS[@]}" --integrate=cursor )
+  local dst="$fake_home/.cursor/rules/agent-message.mdc"
+
+  _install "$fake_home" "${args[@]}" || return 1
+  printf '\n# My extra Cursor rule\nKeep this line.\n' >> "$dst"
+  _install "$fake_home" "${args[@]}" --uninstall || return 1
+
+  local content; content=$(cat "$dst")
+  assert_contains "$content" "My extra Cursor rule" "Cursor user edit preserved" || return 1
+  assert_contains "$content" "Keep this line" "Cursor user content preserved" || return 1
+  assert_not_contains "$content" "agent-message" "Cursor marker block removed"
+}
+
+test_install_uninstall_cursor_preserves_preexisting_file() {
+  local fake_home="$TMP/cursor-preexisting-home"
+  local dst="$fake_home/.cursor/rules/agent-message.mdc"
+  local backup="$TMP/cursor-preexisting.backup"
+  mkdir -p "$(dirname "$dst")"
+  printf '%s\n' '---' 'description: My own Cursor rule' '---' '' 'Keep my rule.' > "$dst"
+  cp "$dst" "$backup"
+  _iargs "$fake_home"
+
+  _install "$fake_home" "${_IARGS[@]}" --integrate=cursor --uninstall || return 1
+  cmp -s "$backup" "$dst" || {
+    echo "  pre-existing Cursor file changed during uninstall"
+    return 1
+  }
+}
+
 test_install_integrate_copilot_preserves_user_content() {
   local fake_home="$TMP/copilot-home"
   local fake_repo="$TMP/copilot-repo"
@@ -1167,6 +1199,62 @@ test_install_integrate_global_refuses_symlinked_target() {
   assert_eq "sensitive" "$content" "global symlink target unchanged"
 }
 
+test_install_uninstall_refuses_symlinked_marker_target() {
+  local fake_home="$TMP/uninstall-sym-home"
+  local fake_repo="$TMP/uninstall-sym-repo"
+  local foreign_file="$TMP/uninstall-sensitive"
+  local backup="$TMP/uninstall-sensitive.backup"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  _iargs "$fake_home"
+  local args=( "${_IARGS[@]}" --integrate=antigravity-repo )
+
+  ( cd "$fake_repo" && _install "$fake_home" "${args[@]}" ) || return 1
+  mv "$fake_repo/AGENTS.md" "$foreign_file"
+  cp "$foreign_file" "$backup"
+  ln -s "$foreign_file" "$fake_repo/AGENTS.md"
+  ( cd "$fake_repo" && _install "$fake_home" "${args[@]}" --uninstall ) || return 1
+
+  cmp -s "$backup" "$foreign_file" || {
+    echo "  symlink target changed during marker uninstall"
+    return 1
+  }
+}
+
+test_install_uninstall_removes_duplicate_marker_blocks() {
+  local fake_home="$TMP/duplicate-home"
+  local fake_repo="$TMP/duplicate-repo"
+  local duplicate="$TMP/duplicate-block"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  _iargs "$fake_home"
+  local args=( "${_IARGS[@]}" --integrate=antigravity-repo )
+
+  ( cd "$fake_repo" && _install "$fake_home" "${args[@]}" ) || return 1
+  cp "$fake_repo/AGENTS.md" "$duplicate"
+  printf '%s' "$(cat "$duplicate")" >> "$fake_repo/AGENTS.md"
+  assert_eq "2" "$(grep -c '^<!-- >>> agent-message >>> -->$' "$fake_repo/AGENTS.md")" \
+    "duplicate marker setup" || return 1
+  ( cd "$fake_repo" && _install "$fake_home" "${args[@]}" --uninstall ) || return 1
+  assert_file_missing "$fake_repo/AGENTS.md"
+}
+
+test_install_uninstall_restores_marker_file_exactly() {
+  local fake_home="$TMP/exact-home"
+  local fake_repo="$TMP/exact-repo"
+  local backup="$TMP/exact.backup"
+  mkdir -p "$fake_home" "$fake_repo/.git"
+  printf '\n\n# User rules\n\n\n' > "$fake_repo/AGENTS.md"
+  cp "$fake_repo/AGENTS.md" "$backup"
+  _iargs "$fake_home"
+  local args=( "${_IARGS[@]}" --integrate=antigravity-repo )
+
+  ( cd "$fake_repo" && _install "$fake_home" "${args[@]}" ) || return 1
+  ( cd "$fake_repo" && _install "$fake_home" "${args[@]}" --uninstall ) || return 1
+  cmp -s "$backup" "$fake_repo/AGENTS.md" || {
+    echo "  marker uninstall did not restore user bytes exactly"
+    return 1
+  }
+}
+
 test_install_uninstall_preserves_attacker_planted_marker_pair() {
   # Attacker ships AGENTS.md with the marker pair wrapping non-canonical content.
   # Exact-match strip must NOT delete it (regex predecessor would have).
@@ -1370,6 +1458,119 @@ test_installer_rc_block_idempotent_and_stripped() {
   assert_contains "$zshrc" "FOO=bar" "user export preserved in .zshrc"
 }
 
+test_installer_refreshes_stale_rc_shell_path() {
+  local fake_home="$TMP/rc-stale-home"
+  mkdir -p "$fake_home"
+  printf '# user rc\n' > "$fake_home/.zshrc"
+  local common=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --bin "$fake_home/.agent-message-cmd"
+  )
+  local old_shell="$fake_home/old-agent-message.sh"
+  local new_shell="$fake_home/new-agent-message.sh"
+
+  _install "$fake_home" "${common[@]}" --shell "$old_shell" || return 1
+  _install "$fake_home" "${common[@]}" --shell "$new_shell" || return 1
+  local content; content=$(cat "$fake_home/.zshrc")
+  assert_not_contains "$content" "$old_shell" "stale rc source path removed" || return 1
+  assert_contains "$content" "$new_shell" "new rc source path installed" || return 1
+  assert_eq "1" "$(grep -c '^# >>> agent-message >>>$' "$fake_home/.zshrc")" \
+    "rc marker remains singular after path refresh"
+}
+
+test_installer_rc_non_utf8_bytes_survive_round_trip() {
+  local fake_home="$TMP/rc-bytes-home"
+  local backup="$TMP/zshrc-bytes.backup"
+  mkdir -p "$fake_home"
+  printf '# user rc\nraw byte: \377\n\n' > "$fake_home/.zshrc"
+  cp "$fake_home/.zshrc" "$backup"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+  )
+
+  _install "$fake_home" "${args[@]}" || return 1
+  _install "$fake_home" "${args[@]}" --uninstall || return 1
+  cmp -s "$backup" "$fake_home/.zshrc" || {
+    echo "  non-UTF-8 rc bytes changed across install/uninstall"
+    return 1
+  }
+}
+
+test_installer_replaces_destination_symlinks_without_following() {
+  local fake_home="$TMP/copy-symlink-home"
+  local command_target="$TMP/command-sensitive"
+  local bin_target="$TMP/bin-sensitive"
+  local shell_target="$TMP/shell-sensitive"
+  local directory_target="$TMP/directory-sensitive"
+  mkdir -p "$fake_home/.claude/commands" "$directory_target"
+  printf 'command secret\n' > "$command_target"
+  printf 'bin secret\n' > "$bin_target"
+  printf 'shell secret\n' > "$shell_target"
+  ln -s "$command_target" "$fake_home/.claude/commands/message-send.md"
+  ln -s "$directory_target" "$fake_home/.claude/commands/message-inbox.md"
+  ln -s "$bin_target" "$fake_home/.agent-message-cmd"
+  ln -s "$shell_target" "$fake_home/.agent-message.sh"
+  local args=(
+    --dir "$fake_home/.local/state/agent-message"
+    --commands "$fake_home/.claude/commands"
+    --shell "$fake_home/.agent-message.sh"
+    --bin "$fake_home/.agent-message-cmd"
+  )
+
+  _install "$fake_home" "${args[@]}" || return 1
+  assert_eq "command secret" "$(cat "$command_target")" "command symlink target untouched" || return 1
+  assert_eq "bin secret" "$(cat "$bin_target")" "bin symlink target untouched" || return 1
+  assert_eq "shell secret" "$(cat "$shell_target")" "shell symlink target untouched" || return 1
+  [[ ! -L "$fake_home/.claude/commands/message-send.md" ]] || return 1
+  [[ ! -L "$fake_home/.claude/commands/message-inbox.md" ]] || return 1
+  [[ ! -L "$fake_home/.agent-message-cmd" ]] || return 1
+  [[ ! -L "$fake_home/.agent-message.sh" ]] || return 1
+  assert_file_exists "$fake_home/.claude/commands/message-inbox.md" || return 1
+  if find "$directory_target" -mindepth 1 -print -quit | grep -q .; then
+    echo "  directory symlink target received an installer file"
+    return 1
+  fi
+}
+
+test_installer_preserves_private_message_dir_mode() {
+  local fake_home="$TMP/private-mode-home"
+  local msg_dir="$fake_home/private-messages"
+  mkdir -p "$msg_dir"
+  chmod 0700 "$msg_dir"
+  _iargs "$fake_home"
+  local args=( "${_IARGS[@]}" --dir "$msg_dir" )
+
+  _install "$fake_home" "${args[@]}" || return 1
+  local mode
+  mode=$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$msg_dir")
+  assert_eq "700" "$mode" "private message directory mode preserved"
+}
+
+test_installer_preserves_private_command_file_mode() {
+  local fake_home="$TMP/private-command-home"
+  local command_file="$fake_home/.claude/commands/message-send.md"
+  mkdir -p "$(dirname "$command_file")"
+  printf '# private command\n' > "$command_file"
+  chmod 0600 "$command_file"
+  _iargs "$fake_home"
+
+  _install "$fake_home" "${_IARGS[@]}" || return 1
+  local mode
+  mode=$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$command_file")
+  assert_eq "600" "$mode" "private command file mode preserved"
+}
+
+test_installer_help_includes_trailing_options() {
+  local out
+  out=$(HOME="$TMP/help-home" "$SCRIPT_DIR/install.sh" --help) || return 1
+  assert_contains "$out" "--uninstall" "help includes uninstall option" || return 1
+  assert_contains "$out" "-h, --help" "help includes help option"
+}
+
 # ---- run ----
 
 TESTS=(
@@ -1421,6 +1622,8 @@ TESTS=(
   test_wrapper_symlink_log_blocks_write
   test_msg_seen_deletion_forces_reread
   test_install_integrate_cursor
+  test_install_uninstall_cursor_preserves_user_content
+  test_install_uninstall_cursor_preserves_preexisting_file
   test_install_integrate_copilot_preserves_user_content
   test_install_integrate_copilot_empty_file_removed
   test_install_integrate_all_and_full_uninstall
@@ -1444,6 +1647,9 @@ TESTS=(
   test_install_integrate_zed_refuses_symlinked_target_non_git
   test_install_integrate_global_refuses_symlinked_target
   test_install_integrate_global_refuses_symlinked_parent_dir
+  test_install_uninstall_refuses_symlinked_marker_target
+  test_install_uninstall_removes_duplicate_marker_blocks
+  test_install_uninstall_restores_marker_file_exactly
   test_install_uninstall_preserves_attacker_planted_marker_pair
   test_install_uninstall_global_preserves_attacker_planted_marker
   test_install_integrate_all_includes_global_and_per_repo
@@ -1453,6 +1659,12 @@ TESTS=(
   test_uninstall_preserves_foreign_files_in_msg_dir
   test_installer_idempotent_and_uninstall
   test_installer_rc_block_idempotent_and_stripped
+  test_installer_refreshes_stale_rc_shell_path
+  test_installer_rc_non_utf8_bytes_survive_round_trip
+  test_installer_replaces_destination_symlinks_without_following
+  test_installer_preserves_private_message_dir_mode
+  test_installer_preserves_private_command_file_mode
+  test_installer_help_includes_trailing_options
 )
 
 echo "running ${#TESTS[@]} tests"
