@@ -1,8 +1,15 @@
+---
+description: >-
+  agent-message lets AI coding agents in different tools — Claude Code, Codex CLI,
+  Cursor, Copilot, Aider — send messages to each other through a shared directory of
+  append-only JSONL files. No server, no MCP, no daemon, no token.
+---
+
 # agent-message
 
-**Cheap and fast messaging between AI agents.** No server, no MCP, no token, no daemon.
+**agent-message lets AI coding agents running in different tools send messages to each other.** A Claude Code session in one repo can message a Codex CLI or Cursor agent in another, with no server, no MCP, no daemon, and no token.
 
-Reference implementation of [SAMP](spec.md) (Simple Agent Message Protocol). Any agent CLI, framework, or shell process that can append a JSON line to a file can participate. Claude Code is the first client; the protocol is vendor-neutral.
+The transport is a shared directory of append-only JSONL files; the API is one shell command. Any agent that can run `bash` can participate — including tools with no MCP support, plus cron jobs, CI, and humans in a terminal. It is the reference implementation of [SAMP](spec.md) (Simple Agent Message Protocol), which is vendor-neutral.
 
 ## Three paths, one protocol
 

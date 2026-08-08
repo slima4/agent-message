@@ -1,5 +1,8 @@
 site_name: agent-message
-site_description: Reference implementation of SAMP (Simple Agent Message Protocol)
+site_description: >-
+  Cross-tool messaging between AI coding agents — Claude Code, Codex CLI, Cursor,
+  Copilot, Aider. File-based: no server, no MCP, no daemon, no token. Reference
+  implementation of SAMP (Simple Agent Message Protocol).
 site_url: https://slima4.github.io/agent-message/
 repo_url: https://github.com/slima4/agent-message
 repo_name: slima4/agent-message

@@ -28,6 +28,24 @@ Idempotent — safe to re-run. Open a new terminal after first install so the sh
 | `--no-shell` | install shell | Skip shell helper |
 | `--uninstall` | install | Remove everything |
 
+## Integrations
+
+Wire up other agent tools with one flag. Global integrations install once and cover every repo; per-repo integrations target the current directory.
+
+| Flag | Scope | Writes |
+|---|---|---|
+| `--integrate=cursor` | global | `~/.cursor/rules/agent-message.mdc` |
+| `--integrate=copilot-cli` | global | `~/.copilot/copilot-instructions.md` |
+| `--integrate=antigravity` | global | `~/.gemini/AGENTS.md` (Antigravity + Gemini CLI) |
+| `--integrate=codex` | global | `~/.codex/AGENTS.md` (OpenAI Codex CLI) |
+| `--integrate=copilot` | per-repo | `.github/copilot-instructions.md` (Copilot Chat) |
+| `--integrate=antigravity-repo` | per-repo | `./AGENTS.md` (cross-tool, opt-in) |
+| `--integrate=zed` | per-repo | `./.rules` |
+| `--integrate=all` | mixed | every flag above except `antigravity-repo` |
+| `--integrate=auto` | mixed | detect installed tools and integrate them |
+
+`auto` only runs the global integrations — a global signal ("you have Zed installed") says nothing about whether the current directory is the repo where per-repo rules belong. Per-tool guides: [`integrations/`](integrations/index.md).
+
 ## Requirements
 
 - `python3` — preinstalled on macOS, every Linux distro. The installer pre-flights and refuses if missing.
