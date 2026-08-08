@@ -4,6 +4,9 @@ messages.jsonl
 .agent-message
 CLAUDE.md
 .claude/
+# vendored third-party agent skills + their lockfile
+.agents/
+skills-lock.json
 # mkdocs build output
 site/
 # venv used to build docs locally

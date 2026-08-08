@@ -1,2 +1,4 @@
-mkdocs>=1.5
-mkdocs-material>=9.5
+# Upper bounds are deliberate: overrides/home.html extends the Material theme, and
+# MkDocs 2.0 rewrites the theming system (all overrides break, no migration path).
+mkdocs>=1.5,<2
+mkdocs-material>=9.5,<10

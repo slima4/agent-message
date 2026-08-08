@@ -1,0 +1,66 @@
+{% extends "main.html" %}
+
+{#
+  Landing page for the docs home. Everything below the hero is plain Markdown
+  in docs/index.md — this template only adds the hero band above it.
+  The terminal transcript is real output, captured from bin/agent-message-cmd.
+#}
+
+{#
+  Replaces partials/content.html, whose fallback <h1> would print the nav title
+  under the hero heading (it injects one whenever page.content has no <h1>).
+  Deliberately references no partials: the tags / actions / source-file / feedback /
+  comments includes render nothing under this project's config, and naming them here
+  would couple the landing page to partial names across Material releases.
+#}
+{% block content %}
+  {{ page.content }}
+{% endblock %}
+
+{% block tabs %}
+  {{ super() }}
+  <section class="am-hero">
+    <div class="am-hero__inner md-grid">
+
+      <div class="am-hero__copy">
+        <p class="am-hero__eyebrow">Reference implementation of SAMP v1</p>
+        {# No manual nbsp glue — text-wrap: balance handles the line breaks, and forced
+           glue on a clamp()-sized title can overflow a narrow viewport. #}
+        <h1 class="am-hero__title">Messaging between AI coding agents</h1>
+        <p class="am-hero__lede">
+          A Claude Code session in one repo messages a Codex CLI or Cursor agent in
+          another. The transport is a shared directory of append-only JSONL files and
+          the API is one shell command — no server, no MCP, no daemon, no token.
+        </p>
+        {# md-typeset: Material scopes .md-button styling under it, and the hero sits outside #}
+        <p class="am-hero__actions md-typeset">
+          <a href="{{ 'install/' | url }}" class="md-button md-button--primary">Install</a>
+          <a href="{{ 'use/' | url }}" class="md-button">Read the docs</a>
+          <a href="{{ config.repo_url }}" class="md-button">GitHub</a>
+        </p>
+      </div>
+
+      {# No aria-label on the wrapper: it would replace the transcript for screen
+         readers instead of introducing it. The bar label carries the context. #}
+      <div class="am-term">
+        <div class="am-term__bar"><span class="am-term__dot" aria-hidden="true"></span>api&nbsp;⇄&nbsp;web</div>
+<pre class="am-term__body"><code><span class="am-c"># repo api — Claude Code</span>
+/message-send web users.token can be null now
+sent api→web thread=2026-08-08-api-users-token-can-be-null-now id=ff8ebf0654be0166
+
+<span class="am-c"># repo web — Codex CLI, or any shell, or cron</span>
+<span class="am-p">$</span> ~/.agent-message-cmd inbox
+[08-08 17:16] from=api id=ff8ebf06 thread=2026-08-08-api-users-token-can-be-null-now:
+  users.token can be null now
+<span class="am-k">1 new from: api (as web)</span>
+</code></pre>
+      </div>
+
+      <p class="am-hero__foot">
+        MIT · needs <code>python3</code> and a POSIX shell, nothing else ·
+        109 tests, green on Linux and macOS
+      </p>
+
+    </div>
+  </section>
+{% endblock %}

@@ -1,0 +1,256 @@
+/* Landing-page hero (docs/index.md via overrides/home.html). Scoped to .am-*
+   so the rest of the site keeps stock Material styling. */
+
+:root {
+  --am-hero-bg: #f6f7f8;
+  --am-line: rgba(0, 0, 0, 0.09);
+  --am-dim: rgba(0, 0, 0, 0.62);
+  /* Button outlines need 3:1 against the hero band (WCAG 1.4.11); --am-line is a
+     hairline rule at ~1.1:1 and would make the outlined CTAs read as plain text. */
+  --am-btn-line: oklch(0 0 0 / 0.45);
+  /* Ring + lift instead of a border: a solid border on the terminal card was
+     invisible in light mode and had to be re-declared for dark. */
+  --am-term-ring:
+    0 0 0 1px oklch(0 0 0 / 0.08),
+    0 1px 2px -1px oklch(0 0 0 / 0.06),
+    0 10px 30px 0 oklch(0 0 0 / 0.12);
+}
+
+[data-md-color-scheme="slate"] {
+  --am-hero-bg: rgba(255, 255, 255, 0.035);
+  --am-line: rgba(255, 255, 255, 0.11);
+  --am-dim: rgba(255, 255, 255, 0.66);
+  --am-btn-line: oklch(1 0 0 / 0.45);
+  /* Layered depth shadows do not read on a dark ground — a single ring does. */
+  --am-term-ring: 0 0 0 1px oklch(1 0 0 / 0.09);
+}
+
+.am-hero {
+  background: var(--am-hero-bg);
+  border-bottom: 1px solid var(--am-line);
+}
+
+.am-hero__inner {
+  padding: 3.2rem 0.8rem 2.4rem;
+  text-align: center;
+}
+
+.am-hero__eyebrow {
+  margin: 0 0 0.9rem;
+  color: var(--am-dim);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.am-hero__title {
+  margin: 0;
+  font-size: clamp(1.9rem, 5.2vw, 3rem);
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+
+.am-hero__lede {
+  margin: 1rem auto 0;
+  max-width: 40rem;
+  color: var(--am-dim);
+  font-size: 0.86rem;
+  line-height: 1.7;
+  text-wrap: balance;
+}
+
+.am-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  justify-content: center;
+  margin: 1.6rem 0 2.2rem;
+}
+
+/* Monochrome buttons. Material falls back to indigo links under a black primary;
+   in the hero that reads as a second accent colour, so pin these to the text colour. */
+.am-hero__actions .md-button {
+  margin: 0;
+  border-color: var(--am-btn-line);
+  color: var(--md-default-fg-color);
+  /* Material's own 125ms colour transition, plus a press scale so the button feels
+     tactile. `scale` longhand, not `transform` — a transform on .md-button does not
+     take effect in Chrome here, while the longhand does. */
+  transition-property: color, background-color, border-color, scale;
+  transition-duration: 125ms;
+  transition-timing-function: ease-out;
+}
+
+.am-hero__actions .md-button:active {
+  scale: 0.96;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .am-hero__actions .md-button:active {
+    scale: 1;
+  }
+}
+
+.am-hero__actions .md-button--primary {
+  border-color: var(--md-default-fg-color);
+  background: var(--md-default-fg-color);
+  color: var(--md-default-bg-color);
+}
+
+.am-hero__actions .md-button:hover,
+.am-hero__actions .md-button:focus {
+  border-color: var(--md-default-fg-color);
+  background: var(--md-default-fg-color);
+  color: var(--md-default-bg-color);
+}
+
+.am-hero__actions .md-button--primary:hover,
+.am-hero__actions .md-button--primary:focus {
+  border-color: var(--md-default-fg-color--light);
+  background: var(--md-default-fg-color--light);
+}
+
+.am-hero__foot {
+  margin: 1.1rem 0 0;
+  color: var(--am-dim);
+  font-size: 0.66rem;
+}
+
+.am-hero__foot code {
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  padding: 0;
+}
+
+/* Home hides both sidebars, so the body copy would otherwise run the full window
+   width. Sibling selector keeps this scoped to the landing page. */
+.am-hero ~ .md-main .md-content__inner {
+  /* Keep Material's .8rem side gutter and 1.2rem bottom margin. Overwriting the
+     whole shorthand dropped both, and Material bleeds code blocks and tabbed labels
+     by -.8rem into that gutter — with no gutter they overflow the viewport and get
+     clipped by html{overflow-x:hidden}. */
+  margin: 0 auto 1.2rem;
+  max-width: min(36rem, 100% - 1.6rem);
+  padding-top: 0.4rem;
+}
+
+/* …but card grids and the tables want more room than a text column. */
+@media screen and (min-width: 60em) {
+  .am-hero ~ .md-main .md-content__inner > .grid.cards,
+  .am-hero ~ .md-main .md-content__inner > .md-typeset__scrollwrap {
+    margin-left: 50%;
+    max-width: calc(100vw - 4rem);
+    transform: translateX(-50%);
+    width: 50rem;
+  }
+
+  /* Tables are nested in two shrink-to-fit divs, so a fixed width would leave the
+     table left-aligned inside it. Size the wrapper to the table instead. */
+  .am-hero ~ .md-main .md-content__inner > .md-typeset__scrollwrap {
+    width: max-content;
+  }
+
+  /* Four link cards otherwise wrap 3 + 1. */
+  .am-hero ~ .md-main .md-content__inner > .grid.am-next {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Terminal card — deliberately dark in both colour schemes: it is a terminal. */
+
+.am-term {
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background: #0d1117;
+  box-shadow: var(--am-term-ring);
+  text-align: left;
+}
+
+.am-term__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid oklch(1 0 0 / 0.08);
+  background: #161b22;
+  color: #8b949e;
+  font-family: var(--md-code-font-family, monospace);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.am-term__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #3fb950;
+}
+
+.am-term__body {
+  margin: 0;
+  padding: 0.9rem 1rem 1rem;
+  overflow-x: auto;
+  background: none;
+}
+
+.am-term__body code {
+  display: block;
+  padding: 0;
+  background: none;
+  color: #c9d1d9;
+  font-family: var(--md-code-font-family, monospace);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+.am-term .am-c { color: #8b949e; }
+.am-term .am-p { color: #3fb950; }
+.am-term .am-k { color: #79c0ff; }
+
+@media screen and (min-width: 60em) {
+  .am-hero__inner { padding: 4.4rem 1.2rem 3rem; }
+  .am-hero__lede { font-size: 0.92rem; }
+  .am-term__body code { font-size: 0.76rem; }
+}
+
+/* Site-wide text wrapping. Kept global on purpose: scoping it to the landing page
+   would make the same heading wrap differently from one page to the next. */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  text-wrap: balance;
+}
+
+.md-typeset p,
+.md-typeset li,
+.md-typeset td {
+  text-wrap: pretty;
+}
+
+/* Footer social link renders 32px square. Extend the hit area without changing the
+   icon's visible size. Links sit 36px apart (1.6rem box + .2rem gap), so with a
+   sibling the overlay stops at 36px wide and only widens when it is the only one —
+   two interactive elements must never have overlapping hit areas. */
+.md-social__link {
+  position: relative;
+}
+
+.md-social__link::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 36px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
+.md-social__link:only-child::after {
+  width: 44px;
+}
