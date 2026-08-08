@@ -4,7 +4,8 @@
 
 Walks a SAMP message store and asserts §9 conformance:
   §1 alias regex      — log filename and from/to fields
-  §2 schema           — id, ts, from, to, thread, body present and well-typed
+  §2 schema           — ts, from, to, thread, body present and well-typed
+                        (id optional on legacy records per §3, validated when present)
   §3 id computation   — sha256(canonical_json({ts,from,to,thread,body}))[:16]
   §5 single-writer    — every record in log-<X>.jsonl has from == X
 
@@ -28,7 +29,8 @@ __version__ = "1.1.1"
 ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 LOG_RE = re.compile(r"^log-(.+)\.jsonl$")
 ID_RE = re.compile(r"^[0-9a-f]{16}$")
-REQUIRED = ("id", "ts", "from", "to", "thread", "body")
+# id is NOT required: legacy records MAY omit it (SPEC §3); it is validated when present.
+REQUIRED = ("ts", "from", "to", "thread", "body")
 
 
 def default_dir() -> Path:
@@ -56,7 +58,10 @@ def validate_record(rec: dict, file_alias: str, lf: Path, line_no: int, violatio
     if rid is not None:
         if not (isinstance(rid, str) and ID_RE.match(rid)):
             violations.append(f"{here}: id must be 16 hex chars, got {rid!r}")
-        elif all(k in rec for k in ("ts", "from", "to", "thread", "body")):
+        elif (isinstance(rec.get("ts"), int) and not isinstance(rec.get("ts"), bool)
+              and all(isinstance(rec.get(k), str) for k in ("from", "to", "thread", "body"))):
+            # Recompute only on well-typed records — cid() on a non-string body
+            # would raise instead of reporting the type violation logged above.
             expected = cid(rec)
             if rid != expected:
                 violations.append(f"{here}: id mismatch (expected {expected}, got {rid})")
@@ -115,9 +120,16 @@ def main() -> int:
             violations.append(f"{lf.name}:0: alias {file_alias!r} fails §1 regex")
 
         try:
-            with open(lf) as f:
-                for line_no, line in enumerate(f, 1):
-                    line = line.strip()
+            # Binary read + per-line decode: one invalid byte is a per-line
+            # violation, not an abort of the whole file.
+            with open(lf, "rb") as f:
+                for line_no, raw in enumerate(f, 1):
+                    try:
+                        line = raw.decode("utf-8").strip()
+                    except UnicodeDecodeError:
+                        records += 1
+                        violations.append(f"{lf.name}:{line_no}: invalid UTF-8 bytes")
+                        continue
                     if not line:
                         continue
                     records += 1

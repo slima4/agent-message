@@ -8,6 +8,7 @@ from pathlib import Path
 __version__ = "1.1.1"
 
 ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")  # C0 minus \t\n, plus DEL — display sanitizer
 
 
 def D() -> Path:
@@ -25,10 +26,10 @@ def me() -> str:
     p = Path(".agent-message")
     if p.is_file():
         try:
-            for ln in p.read_text().splitlines():
+            for ln in p.read_text(encoding="utf-8").splitlines():
                 s = _ok(ln.strip())
                 if s: return s
-        except OSError: pass
+        except (OSError, UnicodeDecodeError): pass
     return _ok(Path.cwd().name) or "unknown"
 
 
@@ -38,9 +39,17 @@ def cid(m: dict) -> str:
     return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 
 
+def _sane(s: str) -> str:
+    return CTRL_RE.sub("", s)
+
+
 def thread_of(body: str, frm: str) -> tuple[str, str]:
     m = re.match(r"\s*\[thread:([^\]]+)\]\s*", body)
-    if m: return m.group(1).strip(), body[m.end():]
+    if m:
+        # Control chars (incl. \t\n) stripped; must match shell/msg.sh exactly (id parity).
+        t = re.sub(r"[\x00-\x1f\x7f]", "", m.group(1)).strip()
+        body = body[m.end():]
+        if t: return t, body
     first = body.splitlines()[0] if body else ""
     slug = re.sub(r"[^a-z0-9]+", "-", first.lower()).strip("-")[:40] or "msg"
     return f"{time.strftime('%Y-%m-%d', time.gmtime())}-{frm}-{slug}", body
@@ -48,9 +57,10 @@ def thread_of(body: str, frm: str) -> tuple[str, str]:
 
 def _aw(p: Path, s: str) -> None:
     # with_name (not with_suffix) so dotted aliases like "host.local" don't
-    # collapse to ".seen-host.tmp" — would collide with alias "host" mid-write.
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(s)
+    # collapse to ".seen-host.tmp". pid suffix: concurrent readers of the same
+    # alias must not share a tmp name.
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+    tmp.write_text(s, encoding="utf-8")
     os.replace(str(tmp), str(p))
 
 
@@ -69,17 +79,24 @@ def iter_to(d: Path, who: str):
     seen = set()
     for lf in _logs(d):
         file_alias = _alias_of(lf)
-        with open(lf) as f:
+        if not ALIAS_RE.match(file_alias): continue
+        with open(lf, encoding="utf-8", errors="replace") as f:
             for ln in f:
                 ln = ln.strip()
                 if not ln: continue
                 try: m = json.loads(ln)
                 except json.JSONDecodeError: continue
-                if m.get("from") != file_alias: continue
-                if m.get("to") != who: continue
-                i = m.get("id") or cid(m)
-                if i in seen: continue
-                seen.add(i)
+                # One malformed foreign record must not brick the reader: require §2 types.
+                if not (isinstance(m, dict) and isinstance(m.get("ts"), (int, float))
+                        and all(isinstance(m.get(k), str) for k in ("from","to","thread","body"))): continue
+                if m["from"] != file_alias: continue
+                if m["to"] != who: continue
+                i = m.get("id")
+                if not (isinstance(i, str) and i): i = cid(m)
+                # Dedup scoped by sender: a forged id in another writer's log
+                # must not suppress the genuine record.
+                if (file_alias, i) in seen: continue
+                seen.add((file_alias, i))
                 yield i, m
 
 
@@ -89,17 +106,19 @@ def write(d: Path, frm: str, to: str, thread: str, body: str) -> dict:
     rec = {"id": cid(rec), **rec}
     d.mkdir(parents=True, exist_ok=True)
     fd = os.open(d/f"log-{frm}.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o644)
-    with os.fdopen(fd, "a") as f:
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return rec
 
 
 def send(args: list[str]) -> None:
     if not args: sys.exit("usage: send <to>")
+    to = args[0]
+    if not _ok(to): sys.exit(f"send: recipient alias {to!r} fails SAMP §1 alias regex")
     if sys.stdin.isatty():
         sys.exit("send: pipe body via stdin, e.g. echo 'hi' | agent-message-cmd send <to>")
-    to = args[0]
-    body = sys.stdin.read().rstrip("\n")
+    # NFC before thread_of so slug (and therefore id) matches shell/msg.sh on non-NFC input.
+    body = unicodedata.normalize("NFC", sys.stdin.read().rstrip("\n"))
     frm = me()
     thread, body = thread_of(body, frm)
     rec = write(D(), frm, to, thread, body)
@@ -114,60 +133,68 @@ def reply(args: list[str]) -> None:
     d = D()
     mine = [m for _, m in iter_to(d, who)]
     if not mine: sys.exit("no inbox messages to reply to")
-    mine.sort(key=lambda m: m.get("ts", 0))
+    mine.sort(key=lambda m: m["ts"])
     last = mine[-1]
     rec = write(d, who, last["from"], last["thread"], body)
-    print(f"reply {who}→{last['from']} thread={last['thread']} id={rec['id']}")
+    print(f"reply {who}→{last['from']} thread={_sane(last['thread'])} id={rec['id']}")
 
 
 def inbox(args: list[str]) -> None:
     mode = args[0] if args else "default"
     if mode not in ("default", "all", "raw"): sys.exit(f"unknown mode: {mode}")
     who = me(); d = D()
+    d.mkdir(parents=True, exist_ok=True)
     sf = d / f".seen-{who}"
     mf = d / f".mtime-{who}"
-    cur_max = 0.0; cur_count = 0
+    now = int(time.time())
+    cur_max = 0.0; cur_count = 0; cur_size = 0
     if mode == "default":
-        log_paths = [p for p in d.glob("log-*.jsonl") if not p.is_symlink()]
-        cur_max = max((p.stat().st_mtime for p in log_paths), default=0.0)
-        cur_count = len(log_paths)
+        stats = [p.stat() for p in d.glob("log-*.jsonl") if not p.is_symlink()]
+        cur_max = max((s.st_mtime for s in stats), default=0.0)
+        cur_count = len(stats)
+        # Size is the third signal: same-tick appends and sync deliveries that
+        # preserve an older sender mtime are invisible to (mtime, count) alone.
+        cur_size = sum(s.st_size for s in stats)
         if mf.exists() and sf.exists():
             try:
-                c = json.loads(mf.read_text())
-                if c.get("max_mtime", 0) >= cur_max and c.get("files", 0) == cur_count:
+                c = json.loads(mf.read_text(encoding="utf-8"))
+                if c.get("max_mtime", 0) >= cur_max and c.get("files", 0) == cur_count and c.get("size", -1) == cur_size:
                     print(f"no new messages (as {who})"); return
-            except json.JSONDecodeError: pass
+            except ValueError: pass
     since, since_ids = 0, set()
     if mode == "default" and sf.exists():
         try:
-            c = json.loads(sf.read_text())
-            since, since_ids = c.get("ts", 0), set(c.get("ids", []))
-        except json.JSONDecodeError: pass
-    out = []
+            c = json.loads(sf.read_text(encoding="utf-8"))
+            # Cap at local now: self-heals a watermark pushed into the future.
+            since, since_ids = min(c.get("ts", 0), now), set(c.get("ids", []))
+        except ValueError: pass
+    out = []; allm = []
     for i, m in iter_to(d, who):
-        t = m.get("ts", 0)
-        if mode == "default" and (t < since or (t == since and i in since_ids)): continue
+        t = m["ts"]; k = f"{m['from']}:{i}"
+        allm.append((k, t))
+        if mode == "default" and (t < since or k in since_ids): continue
         out.append((i, m))
-    out.sort(key=lambda x: x[1].get("ts", 0))
+    out.sort(key=lambda x: x[1]["ts"])
     if not out:
         print(f"{'no new messages' if mode == 'default' else 'no messages'} (as {who})")
-        if mode == "default": _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count}))
+        if mode == "default": _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count, "size": cur_size}))
         return
     if mode == "raw":
         for _, m in out:
             print(json.dumps(m, ensure_ascii=False))
         return
     for _, m in out:
-        t = time.strftime("%m-%d %H:%M", time.localtime(m.get("ts", 0)))
-        body = m.get("body") or ""
-        first = body.splitlines()[0][:80] if body else ""
-        print(f"[{t}] from={m['from']} thread={m['thread']}: {first}")
+        t = time.strftime("%m-%d %H:%M", time.localtime(m["ts"]))
+        first = _sane(m["body"].splitlines()[0][:80]) if m["body"] else ""
+        print(f"[{t}] from={m['from']} thread={_sane(m['thread'])}: {first}")
     if mode == "default":
-        nm = max(m.get("ts", 0) for _, m in out)
-        nids = [i for i, m in out if m.get("ts", 0) == nm]
-        if nm == since: nids = sorted(since_ids | set(nids))
-        _aw(sf, json.dumps({"ts": nm, "ids": list(nids)}))
-        _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count}))
+        # Watermark capped at local now so a fast-clock sender can't advance it
+        # past honest senders; ids carry every shown record with ts >= the cap.
+        shown = {f"{m['from']}:{i}" for i, m in out}
+        new_since = min(now, max(m["ts"] for _, m in out))
+        new_ids = sorted(k for k, t in allm if t >= new_since and (k in shown or k in since_ids))
+        _aw(sf, json.dumps({"ts": new_since, "ids": new_ids}))
+        _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count, "size": cur_size}))
     senders = sorted({m["from"] for _, m in out})
     print(f"{len(out)} new from: {', '.join(senders)} (as {who})")
 
@@ -175,6 +202,10 @@ def inbox(args: list[str]) -> None:
 OPS = {"send": send, "inbox": inbox, "reply": reply}
 
 if __name__ == "__main__":
+    for _std in (sys.stdin, sys.stdout):
+        # UTF-8 regardless of locale; replace on output so a bare 'C' locale can't
+        # crash the status print after a record already landed on disk.
+        getattr(_std, "reconfigure", lambda **_: None)(encoding="utf-8", errors="replace")
     if len(sys.argv) >= 2 and sys.argv[1] in ("--version", "-V"):
         print(f"agent-message {__version__} (SAMP v1)")
         sys.exit(0)

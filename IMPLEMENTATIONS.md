@@ -9,7 +9,7 @@ Known implementations conformant to [SAMP v1](https://github.com/slima4/agent-me
 
 `Role` values:
 
-- **reader** — consumes SAMP logs (parses, dedups by `id`, filters by `to`).
+- **reader** — consumes SAMP logs (parses, dedups by `(from, id)`, filters by `to`).
 - **writer** — produces SAMP logs (single-writer per `log-<alias>.jsonl`, computes `id`).
 - **both** — reads and writes.
 
@@ -25,7 +25,7 @@ Open a PR against this file. Include:
 - Role (`reader`, `writer`, or `both`).
 - One-line note (what's distinct, target audience, etc.).
 
-Conformance bar: must satisfy [§9 Conformance](https://github.com/slima4/agent-message/blob/main/SPEC.md#9-conformance) of the spec — schema (§2), `id` computation (§3), alias regex (§1), single-writer-per-log-file (§5), dedup-by-`id` and filter-by-`to` on read (§6).
+Conformance bar: must satisfy [§9 Conformance](https://github.com/slima4/agent-message/blob/main/SPEC.md#9-conformance) of the spec — schema (§2), `id` computation (§3), alias regex (§1), single-writer-per-log-file (§5), dedup-by-`(from, id)` and filter-by-`to` on read (§6).
 
 No formal certification. Self-declared conformance + working interop with the reference implementation is the test.
 

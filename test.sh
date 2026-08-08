@@ -447,6 +447,8 @@ PY
 # ---- security + correctness tests ----
 
 test_msg_alias_traversal_blocked() {
+  # Invalid override line falls back to cwd basename — same as the wrapper
+  # (test_wrapper_alias_traversal_blocked expects log-foo.jsonl too).
   ( cd "$TMP/foo" || exit 1
     echo "../../../tmp/PWNED-msg-$$" > .agent-message
     # shellcheck source=shell/msg.sh
@@ -454,7 +456,212 @@ test_msg_alias_traversal_blocked() {
     msg send bar "evil" ) >/dev/null 2>&1
   assert_file_missing "/tmp/PWNED-msg-$$" || return 1
   assert_file_missing "/tmp/PWNED-msg-$$.jsonl" || return 1
-  assert_file_exists "$AGENT_MESSAGE_DIR/log-unknown.jsonl"
+  assert_file_exists "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+}
+
+test_alias_resolution_parity() {
+  # .agent-message: invalid first line, valid second line, NO trailing newline.
+  # Both impls must resolve "ali" — line-1-only reads and `read || me=""` EOF
+  # handling each produced a different alias here before.
+  mkdir -p "$TMP/proj"
+  printf 'not valid!\nali' > "$TMP/proj/.agent-message"
+  ( cd "$TMP/proj" && echo "w" | "$WRAPPER" send bar ) >/dev/null
+  assert_file_exists "$AGENT_MESSAGE_DIR/log-ali.jsonl" || return 1
+  rm -f "$AGENT_MESSAGE_DIR/log-ali.jsonl"
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/proj" && msg send bar "s" ) >/dev/null
+  assert_file_exists "$AGENT_MESSAGE_DIR/log-ali.jsonl"
+}
+
+test_send_rejects_invalid_recipient() {
+  local rc=0
+  ( cd "$TMP/foo" && echo "hi" | "$WRAPPER" send 'bad alias!' ) >/dev/null 2>&1 || rc=$?
+  [[ $rc -ne 0 ]] || { echo "  wrapper send accepted invalid recipient"; return 1; }
+  rc=0
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/foo" && msg send 'bad alias!' "hi" ) >/dev/null 2>&1 || rc=$?
+  [[ $rc -ne 0 ]] || { echo "  msg send accepted invalid recipient"; return 1; }
+  assert_file_missing "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+}
+
+test_reader_tolerates_malformed_records() {
+  # Missing thread, string ts, invalid UTF-8: readers must skip, not crash.
+  mkdir -p "$AGENT_MESSAGE_DIR"
+  {
+    printf '{"ts":1700000000,"from":"peer","to":"bar","body":"no thread"}\n'
+    printf '{"ts":"1700000001","from":"peer","to":"bar","thread":"t","body":"string ts"}\n'
+    printf 'caf\xe9 not json\n'
+  } > "$AGENT_MESSAGE_DIR/log-peer.jsonl"
+  ( cd "$TMP/foo" && echo "valid msg" | "$WRAPPER" send bar ) >/dev/null
+  local out rc=0
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox 2>&1 ) || rc=$?
+  assert_eq "0" "$rc" "wrapper inbox survives malformed records" || return 1
+  assert_contains "$out" "valid msg" "wrapper shows the valid message" || return 1
+  rm -f "$AGENT_MESSAGE_DIR/.seen-bar" "$AGENT_MESSAGE_DIR/.mtime-bar"
+  rc=0
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg 2>&1 ) || rc=$?
+  assert_eq "0" "$rc" "shell inbox survives malformed records" || return 1
+  assert_contains "$out" "valid msg" "shell shows the valid message"
+}
+
+test_wrapper_inbox_creates_missing_dir() {
+  export AGENT_MESSAGE_DIR="$TMP/nonexistent/deep"
+  local out rc=0
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox 2>&1 ) || rc=$?
+  assert_eq "0" "$rc" "inbox on missing dir exits 0" || return 1
+  assert_contains "$out" "no new messages" "inbox reports empty inbox"
+}
+
+test_thread_slug_parity_nfd() {
+  # NFD body ('cafe' + combining acute): both impls must NFC-normalize BEFORE
+  # deriving the slug, or the same message gets different thread → different id.
+  ( cd "$TMP/foo" && printf 'cafe\xcc\x81 menu\nx' | "$WRAPPER" send bar ) >/dev/null
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/foo" && msg send bar "$(printf 'cafe\xcc\x81 menu\nx')" ) >/dev/null
+  python3 - "$AGENT_MESSAGE_DIR/log-foo.jsonl" <<'PY'
+import json, sys
+recs = [json.loads(ln) for ln in open(sys.argv[1], encoding="utf-8")]
+assert len(recs) == 2, f"expected 2 records, got {len(recs)}"
+t1, t2 = recs[0]["thread"], recs[1]["thread"]
+assert t1 == t2, f"thread divergence: wrapper={t1!r} shell={t2!r}"
+assert recs[0]["body"] == recs[1]["body"], "body divergence"
+PY
+}
+
+test_thread_empty_override_falls_back() {
+  # "[thread: ]" strips to empty — must auto-derive, not collapse threads onto "".
+  ( cd "$TMP/foo" && printf '[thread: ] hello world' | "$WRAPPER" send bar ) >/dev/null
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/foo" && msg send bar "[thread: ] hello world" ) >/dev/null
+  python3 - "$AGENT_MESSAGE_DIR/log-foo.jsonl" <<'PY'
+import json, sys
+for ln in open(sys.argv[1], encoding="utf-8"):
+    rec = json.loads(ln)
+    assert rec["thread"].endswith("-foo-hello-world"), f"bad thread: {rec['thread']!r}"
+    assert rec["body"] == "hello world", f"prefix not stripped: {rec['body']!r}"
+PY
+}
+
+test_forged_id_suppression_blocked() {
+  ( cd "$TMP/foo" && echo "APPROVE the merge" | "$WRAPPER" send bar ) >/dev/null
+  # Forge a record in an earlier-sorting log carrying the real message's id.
+  python3 - "$AGENT_MESSAGE_DIR" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+real = json.loads(open(os.path.join(d, "log-foo.jsonl"), encoding="utf-8").readline())
+forged = {"id": real["id"], "ts": real["ts"], "from": "aaa", "to": "bar", "thread": "junk", "body": "junk"}
+open(os.path.join(d, "log-aaa.jsonl"), "w", encoding="utf-8").write(json.dumps(forged) + "\n")
+PY
+  local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "APPROVE the merge" "wrapper: real message survives forged-id dedup" || return 1
+  rm -f "$AGENT_MESSAGE_DIR/.seen-bar" "$AGENT_MESSAGE_DIR/.mtime-bar"
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg )
+  assert_contains "$out" "APPROVE the merge" "shell: real message survives forged-id dedup"
+}
+
+test_wrapper_mtime_cache_size_signal() {
+  ( cd "$TMP/foo" && echo "one" | "$WRAPPER" send bar ) >/dev/null
+  ( cd "$TMP/bar" && "$WRAPPER" inbox ) >/dev/null
+  # Append while pinning mtime back — only the size signal can catch this.
+  touch -r "$AGENT_MESSAGE_DIR/log-foo.jsonl" "$TMP/mtime-ref"
+  ( cd "$TMP/foo" && echo "two" | "$WRAPPER" send bar ) >/dev/null
+  touch -r "$TMP/mtime-ref" "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+  local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "two" "size change defeats pinned-mtime cache"
+}
+
+test_msg_mtime_cache_size_signal() {
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/foo" && msg send bar "one" ) >/dev/null
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/bar" && msg ) >/dev/null
+  touch -r "$AGENT_MESSAGE_DIR/log-foo.jsonl" "$TMP/mtime-ref"
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/foo" && msg send bar "two" ) >/dev/null
+  touch -r "$TMP/mtime-ref" "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+  local out
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg )
+  assert_contains "$out" "two" "shell: size change defeats pinned-mtime cache"
+}
+
+# Append a well-formed record with an arbitrary ts to $2/log-$1.jsonl.
+_plant_record() {
+  python3 - "$1" "$2" "$3" "$4" <<'PY'
+import hashlib, json, os, sys
+frm, d, ts, body = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+core = {"ts": ts, "from": frm, "to": "bar", "thread": f"t-{frm}", "body": body}
+i = hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
+os.makedirs(d, exist_ok=True)
+with open(os.path.join(d, f"log-{frm}.jsonl"), "a", encoding="utf-8") as f:
+    f.write(json.dumps({"id": i, **core}) + "\n")
+PY
+}
+
+test_wrapper_watermark_clock_skew_no_loss() {
+  # A sender 300s in the future must not hide a later on-time message.
+  _plant_record fast "$AGENT_MESSAGE_DIR" "$(($(date +%s) + 300))" "from the future"
+  ( cd "$TMP/bar" && "$WRAPPER" inbox ) >/dev/null
+  _plant_record slow "$AGENT_MESSAGE_DIR" "$(date +%s)" "on time"
+  local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "on time" "honest-clock message not lost behind skewed watermark" || return 1
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "no new messages" "watermark stable after skew"
+}
+
+test_msg_watermark_clock_skew_no_loss() {
+  _plant_record fast "$AGENT_MESSAGE_DIR" "$(($(date +%s) + 300))" "from the future"
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/bar" && msg ) >/dev/null
+  _plant_record slow "$AGENT_MESSAGE_DIR" "$(date +%s)" "on time"
+  local out
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg )
+  assert_contains "$out" "on time" "shell: honest-clock message not lost behind skewed watermark" || return 1
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg )
+  assert_contains "$out" "no new messages" "shell: watermark stable after skew"
+}
+
+test_msg_compact_own_log_only() {
+  mkdir -p "$AGENT_MESSAGE_DIR"
+  printf '{"ts":1,"from":"foo","to":"bar","thread":"t","body":"a"}\n{"ts":1,"from":"foo","to":"bar","thread":"t","body":"a"}\n' > "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+  printf '{"ts":1,"from":"other","to":"bar","thread":"t","body":"b"}\n{"ts":1,"from":"other","to":"bar","thread":"t","body":"b"}\n' > "$AGENT_MESSAGE_DIR/log-other.jsonl"
+  local before_other; before_other=$(cat "$AGENT_MESSAGE_DIR/log-other.jsonl")
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/foo" && msg compact ) >/dev/null
+  local n; n=$(wc -l < "$AGENT_MESSAGE_DIR/log-foo.jsonl" | tr -d ' ')
+  assert_eq "1" "$n" "own log deduped" || return 1
+  assert_eq "$before_other" "$(cat "$AGENT_MESSAGE_DIR/log-other.jsonl")" "foreign log untouched (§5: not ours to rewrite)"
+}
+
+test_msg_compact_preserves_unparseable() {
+  mkdir -p "$AGENT_MESSAGE_DIR"
+  printf '{"ts":1,"from":"foo","to":"bar","thread":"t","body":"a"}\n{"ts":1,"from":"foo","to":"bar","thread":"t","body":"a"}\n{"truncated\n' > "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+  # shellcheck source=shell/msg.sh
+  ( source "$SHELL_HELPER"; cd "$TMP/foo" && msg compact ) >/dev/null
+  grep -q '{"truncated' "$AGENT_MESSAGE_DIR/log-foo.jsonl" || { echo "  truncated line was destroyed"; return 1; }
+  local n; n=$(wc -l < "$AGENT_MESSAGE_DIR/log-foo.jsonl" | tr -d ' ')
+  assert_eq "2" "$n" "duplicate removed, truncated line kept"
+}
+
+test_validator_allows_legacy_missing_id() {
+  mkdir -p "$AGENT_MESSAGE_DIR"
+  printf '{"ts":1700000000,"from":"foo","to":"bar","thread":"t","body":"legacy"}\n' > "$AGENT_MESSAGE_DIR/log-foo.jsonl"
+  local rc=0; "$VALIDATOR" "$AGENT_MESSAGE_DIR" >/dev/null 2>&1 || rc=$?
+  assert_eq "0" "$rc" "record without id passes (SPEC §3: legacy MAY omit)"
+}
+
+test_inbox_strips_ansi_escapes() {
+  ( cd "$TMP/foo" && printf 'evil \x1b[31mred\x1b[0m text' | "$WRAPPER" send bar ) >/dev/null
+  local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_not_contains "$out" $'\x1b' "ESC stripped from wrapper inbox" || return 1
+  rm -f "$AGENT_MESSAGE_DIR/.seen-bar" "$AGENT_MESSAGE_DIR/.mtime-bar"
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg )
+  assert_not_contains "$out" $'\x1b' "ESC stripped from shell inbox"
 }
 
 test_wrapper_single_writer_runtime_enforced() {
@@ -1193,6 +1400,21 @@ TESTS=(
   test_cid_spec_golden
   test_cid_golden_nfd_thread
   test_msg_alias_traversal_blocked
+  test_alias_resolution_parity
+  test_send_rejects_invalid_recipient
+  test_reader_tolerates_malformed_records
+  test_wrapper_inbox_creates_missing_dir
+  test_thread_slug_parity_nfd
+  test_thread_empty_override_falls_back
+  test_forged_id_suppression_blocked
+  test_wrapper_mtime_cache_size_signal
+  test_msg_mtime_cache_size_signal
+  test_wrapper_watermark_clock_skew_no_loss
+  test_msg_watermark_clock_skew_no_loss
+  test_msg_compact_own_log_only
+  test_msg_compact_preserves_unparseable
+  test_validator_allows_legacy_missing_id
+  test_inbox_strips_ansi_escapes
   test_wrapper_single_writer_runtime_enforced
   test_wrapper_nfc_body
   test_msg_thread_strip_whitespace

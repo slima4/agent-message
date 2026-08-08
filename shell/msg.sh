@@ -15,21 +15,28 @@
 #   msg cat <id|prefix>        # pretty-print one record by id (min 4 chars)
 #   msg log [alias]            # git-log style, messages involving me (or alias)
 #   msg raw [all]              # JSONL dump for `jq` / scripts
-#   msg compact                # within-file dedup; ensures id populated
+#   msg compact                # dedup own log; ensures id populated
 #
 #   msg help
 #
-# Alias = `basename $PWD`, overridable via `.agent-message` first line at repo root.
+# Alias = `basename $PWD`, overridable via `.agent-message` (first valid line) at repo root.
 # Message dir = $AGENT_MESSAGE_DIR or ${XDG_STATE_HOME:-$HOME/.local/state}/agent-message/. Each writer owns
 # $DIR/log-<alias>.jsonl (single-writer, no interleave). Readers union across
-# log-*.jsonl and dedup by content-addressed id.
+# log-*.jsonl and dedup by (from, content-addressed id).
 
 msg() {
   local dir="${AGENT_MESSAGE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agent-message}"
-  local me=""
-  if [ -s .agent-message ]; then
-    IFS= read -r me < .agent-message || me=""
-    me=${me%$'\r'}
+  local me="" line
+  # Mirrors the wrapper's me(): scan lines, strip whitespace, first line passing
+  # the §1 regex wins; anything else falls back to cwd basename.
+  if [ -f .agent-message ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      case "$line" in ''|*[!A-Za-z0-9._-]*|[!A-Za-z0-9]*) continue ;; esac
+      [ ${#line} -le 64 ] || continue
+      me="$line"; break
+    done < .agent-message
   fi
   [ -z "$me" ] && me=${PWD##*/}
   # §1 alias regex enforcement (must match Python wrapper's _ok())
@@ -42,15 +49,20 @@ msg() {
     send)
       if [ $# -lt 2 ]; then echo "usage: msg send <to> <body...>" >&2; return 2; fi
       local to="$1"; shift
+      case "$to" in ''|*[!A-Za-z0-9._-]*|[!A-Za-z0-9]*) echo "msg send: recipient alias '$to' fails SAMP §1 alias regex" >&2; return 2 ;; esac
+      if [ ${#to} -gt 64 ]; then echo "msg send: recipient alias '$to' fails SAMP §1 alias regex" >&2; return 2; fi
       MSG_ME="$me" MSG_TO="$to" MSG_BODY="$*" MSG_DIR="$dir" python3 - <<'PY'
 import json, os, time, re, datetime, hashlib, unicodedata
 from pathlib import Path
 me=os.environ["MSG_ME"]; to=os.environ["MSG_TO"]
 body=unicodedata.normalize("NFC", os.environ["MSG_BODY"]); d=Path(os.environ["MSG_DIR"])
 m=re.match(r"\s*\[thread:([^\]]+)\]\s*", body)
+thread=""
 if m:
-    thread=m.group(1).strip(); body=body[m.end():]
-else:
+    # Control chars stripped; empty result falls through to auto-derive.
+    # Must match bin/agent-message-cmd thread_of() exactly (id parity).
+    thread=re.sub(r"[\x00-\x1f\x7f]", "", m.group(1)).strip(); body=body[m.end():]
+if not thread:
     first=body.splitlines()[0] if body else ""
     slug=re.sub(r"[^a-z0-9]+", "-", first.lower()).strip("-")[:40] or "msg"
     thread=f"{datetime.datetime.now(datetime.timezone.utc).date().isoformat()}-{me}-{slug}"
@@ -59,7 +71,7 @@ core={"ts":ts,"from":me,"to":to,"thread":thread,"body":body}
 mid=hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 rec={"id":mid, **core}
 fd=os.open(d/f"log-{me}.jsonl", os.O_WRONLY|os.O_APPEND|os.O_CREAT|os.O_NOFOLLOW, 0o644)
-with os.fdopen(fd, "a") as f:
+with os.fdopen(fd, "a", encoding="utf-8") as f:
     f.write(json.dumps(rec, ensure_ascii=False)+"\n")
 print(f"sent {me}→{to} thread={thread} id={mid}")
 PY
@@ -67,116 +79,134 @@ PY
     reply)
       if [ $# -lt 1 ]; then echo "usage: msg reply <body...>" >&2; return 2; fi
       MSG_ME="$me" MSG_BODY="$*" MSG_DIR="$dir" python3 - <<'PY'
-import json, os, sys, time, hashlib, unicodedata
+import json, os, re, sys, time, hashlib, unicodedata
 from pathlib import Path
 me=os.environ["MSG_ME"]; body=unicodedata.normalize("NFC", os.environ["MSG_BODY"]); d=Path(os.environ["MSG_DIR"])
+A=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+S=lambda s: re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", s)
 mine=[]
 for lf in sorted(d.glob("log-*.jsonl")):
     if lf.is_symlink(): continue
     file_alias=lf.name[4:-6]
-    with open(lf) as f:
+    if not A.match(file_alias): continue
+    with open(lf, encoding="utf-8", errors="replace") as f:
         for line in f:
             line=line.strip()
             if not line: continue
             try: m=json.loads(line)
             except json.JSONDecodeError: continue
-            if m.get("from")!=file_alias: continue
-            if m.get("to")==me: mine.append(m)
+            if not (isinstance(m, dict) and isinstance(m.get("ts"),(int,float)) and all(isinstance(m.get(k),str) for k in ("from","to","thread","body"))): continue
+            if m["from"]!=file_alias: continue
+            if m["to"]==me: mine.append(m)
 if not mine: sys.exit("no inbox messages")
-mine.sort(key=lambda m: m.get("ts",0))
+mine.sort(key=lambda m: m["ts"])
 last=mine[-1]
 ts=int(time.time())
 core={"ts":ts,"from":me,"to":last["from"],"thread":last["thread"],"body":body}
 mid=hashlib.sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 rec={"id":mid, **core}
 fd=os.open(d/f"log-{me}.jsonl", os.O_WRONLY|os.O_APPEND|os.O_CREAT|os.O_NOFOLLOW, 0o644)
-with os.fdopen(fd, "a") as f:
+with os.fdopen(fd, "a", encoding="utf-8") as f:
     f.write(json.dumps(rec, ensure_ascii=False)+"\n")
-print(f"reply {me}→{last['from']} thread={last['thread']} id={mid}")
+print(f"reply {me}→{last['from']} thread={S(last['thread'])} id={mid}")
 PY
       ;;
     new|inbox|all)
       local mode=new
       [ "$cmd" = all ] && mode=all
       MSG_ME="$me" MSG_DIR="$dir" MSG_MODE="$mode" python3 - <<'PY'
-import json, os, time, hashlib, unicodedata
+import json, os, re, time, hashlib, unicodedata
 from pathlib import Path
 me=os.environ["MSG_ME"]; d=Path(os.environ["MSG_DIR"]); mode=os.environ["MSG_MODE"]
+A=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+S=lambda s: re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", s)
 log_paths=[p for p in sorted(d.glob("log-*.jsonl")) if not p.is_symlink()]
 def aw(p, s):
-    # with_name (not with_suffix): dotted aliases like "host.local" must not collapse to ".seen-host.tmp".
-    t=p.with_name(p.name+".tmp"); t.write_text(s); os.replace(str(t), str(p))
+    # with_name (not with_suffix): dotted aliases like "host.local" must not collapse
+    # to ".seen-host.tmp". pid suffix: concurrent readers must not share a tmp.
+    t=p.with_name(f"{p.name}.{os.getpid()}.tmp"); t.write_text(s, encoding="utf-8"); os.replace(str(t), str(p))
 # mtime short-circuit — skip parse entirely if nothing observable changed.
+# Size is the third signal: same-tick appends and sync deliveries preserving an
+# older sender mtime are invisible to (mtime, count) alone.
 mtime_file=d/f".mtime-{me}"
 seen_file=d/f".seen-{me}"
-cur_max=max((p.stat().st_mtime for p in log_paths), default=0.0)
-cur_count=len(log_paths)
+stats=[p.stat() for p in log_paths]
+cur_max=max((s.st_mtime for s in stats), default=0.0)
+cur_count=len(stats)
+cur_size=sum(s.st_size for s in stats)
+now=int(time.time())
 # Only short-circuit if seen_file also exists; otherwise user may have deleted it to force re-read.
 if mode=="new" and mtime_file.exists() and seen_file.exists():
     try:
-        c=json.loads(mtime_file.read_text())
-        if c.get("max_mtime",0) >= cur_max and c.get("files",0) == cur_count:
+        c=json.loads(mtime_file.read_text(encoding="utf-8"))
+        if c.get("max_mtime",0) >= cur_max and c.get("files",0) == cur_count and c.get("size",-1) == cur_size:
             print(f"no new messages (as {me})"); raise SystemExit
-    except json.JSONDecodeError:
+    except ValueError:
         pass
 since=0; since_ids=set()
 if mode=="new" and seen_file.exists():
     try:
-        c=json.loads(seen_file.read_text())
-        since=c.get("ts",0); since_ids=set(c.get("ids",[]))
-    except json.JSONDecodeError:
+        c=json.loads(seen_file.read_text(encoding="utf-8"))
+        # Cap at local now: self-heals a watermark pushed into the future.
+        since=min(c.get("ts",0), now); since_ids=set(c.get("ids",[]))
+    except ValueError:
         pass
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
     if "body" in c: c["body"]=unicodedata.normalize("NFC", c["body"])
     return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
-seen_ids=set()
-msgs=[]
+seen=set()
+msgs=[]; allm=[]
 for lf in log_paths:
     file_alias=lf.name[4:-6]
-    with open(lf) as f:
+    if not A.match(file_alias): continue
+    with open(lf, encoding="utf-8", errors="replace") as f:
         for line in f:
             line=line.strip()
             if not line: continue
             try: m=json.loads(line)
             except json.JSONDecodeError: continue
-            if m.get("from")!=file_alias: continue
-            if m.get("to")!=me: continue
-            mid=m.get("id") or cid(m)
-            if mid in seen_ids: continue
-            seen_ids.add(mid)
-            t=m.get("ts",0)
-            # Watermark: strictly past, or equal-ts but already in prior-run ids-at-max-ts.
-            # Handles same-second messages (1s clock resolution) without re-showing.
-            if mode=="new" and (t<since or (t==since and mid in since_ids)): continue
-            m["_id"]=mid
+            # One malformed foreign record must not brick the reader: require §2 types.
+            if not (isinstance(m, dict) and isinstance(m.get("ts"),(int,float)) and all(isinstance(m.get(k),str) for k in ("from","to","thread","body"))): continue
+            if m["from"]!=file_alias: continue
+            if m["to"]!=me: continue
+            mid=m.get("id")
+            if not (isinstance(mid,str) and mid): mid=cid(m)
+            # Dedup scoped by sender: a forged id in another writer's log must not
+            # suppress the genuine record.
+            if (file_alias, mid) in seen: continue
+            seen.add((file_alias, mid))
+            t=m["ts"]; k=f"{m['from']}:{mid}"
+            allm.append((k, t))
+            # Watermark: strictly past, or already-shown id (ids cover every shown
+            # record with ts >= the clock-capped watermark).
+            if mode=="new" and (t<since or k in since_ids): continue
+            m["_k"]=k
             msgs.append(m)
-msgs.sort(key=lambda m: m.get("ts",0))
+msgs.sort(key=lambda m: m["ts"])
 if not msgs:
     print(f"{'no new messages' if mode=='new' else 'no messages'} (as {me})")
     if mode=="new":
-        aw(mtime_file, json.dumps({"max_mtime":cur_max,"files":cur_count}))
+        aw(mtime_file, json.dumps({"max_mtime":cur_max,"files":cur_count,"size":cur_size}))
     raise SystemExit
 for m in msgs:
-    ts=time.strftime("%m-%d %H:%M", time.localtime(m.get("ts",0)))
-    body=m.get("body") or ""
-    first=body.splitlines()[0][:80] if body else ""
-    print(f"[{ts}] from={m['from']} thread={m['thread']}: {first}")
+    ts=time.strftime("%m-%d %H:%M", time.localtime(m["ts"]))
+    first=S(m["body"].splitlines()[0][:80]) if m["body"] else ""
+    print(f"[{ts}] from={m['from']} thread={S(m['thread'])}: {first}")
 senders=sorted({m["from"] for m in msgs})
 print(f"{len(msgs)} new from: {', '.join(senders)} (as {me})")
 if mode=="new":
-    new_max=max(m.get("ts",0) for m in msgs)
-    # Accumulate ids at max-ts across old + new so we don't lose prior state
-    # if nothing newer arrived between runs.
-    new_ids=[m["_id"] for m in msgs if m.get("ts",0)==new_max]
-    if new_max==since:
-        new_ids=sorted(since_ids | set(new_ids))
-    aw(seen_file, json.dumps({"ts":new_max,"ids":list(new_ids)}))
-    aw(mtime_file, json.dumps({"max_mtime":cur_max,"files":cur_count}))
+    # Watermark capped at local now so a fast-clock sender can't advance it past
+    # honest senders; ids carry every shown record with ts >= the cap.
+    shown={m["_k"] for m in msgs}
+    new_since=min(now, max(m["ts"] for m in msgs))
+    new_ids=sorted(k for k,t in allm if t>=new_since and (k in shown or k in since_ids))
+    aw(seen_file, json.dumps({"ts":new_since,"ids":new_ids}))
+    aw(mtime_file, json.dumps({"max_mtime":cur_max,"files":cur_count,"size":cur_size}))
 PY
       ;;
     tail)
-      local logs=() f
+      local logs=() f alias0=""
       for f in "$dir"/log-*.jsonl; do
         [ -f "$f" ] && [ ! -L "$f" ] && logs+=("$f")
       done
@@ -184,30 +214,51 @@ PY
         echo "no logs in $dir yet -- nothing to follow" >&2
         return 1
       fi
+      # tail emits no "==> file <==" headers for a single file: seed the alias.
+      if [ ${#logs[@]} -eq 1 ]; then
+        alias0=${logs[0]##*/}; alias0=${alias0#log-}; alias0=${alias0%.jsonl}
+      fi
       # python3 -c keeps stdin free for the pipe from tail (heredoc would shadow it).
-      tail -n0 -F "${logs[@]}" 2>/dev/null | MSG_ME="$me" python3 -u -c '
-import json, os, sys, time
+      tail -n0 -F "${logs[@]}" 2>/dev/null | MSG_ME="$me" MSG_ALIAS0="$alias0" python3 -u -c '
+import json, os, re, sys, time
 me=os.environ["MSG_ME"]
+A=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+S=lambda s: re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", s)
+alias=os.environ.get("MSG_ALIAS0") or None
+seen=set()
 for line in sys.stdin:
     line=line.strip()
     if not line: continue
-    # tail -F emits "==> file <==" headers on file switch; skip them.
-    if line.startswith("==>") and line.endswith("<=="): continue
+    # tail -F emits "==> path <==" headers on file switch; use them to attribute
+    # each record to its source log for the §5 from==file_alias check.
+    if line.startswith("==>") and line.endswith("<=="):
+        n=os.path.basename(line[3:-3].strip())
+        alias=n[4:-6] if n.startswith("log-") and n.endswith(".jsonl") else None
+        continue
     try: m=json.loads(line)
     except json.JSONDecodeError: continue
-    if m.get("to")!=me: continue
-    ts=time.strftime("%m-%d %H:%M", time.localtime(m.get("ts",0)))
-    body=m.get("body") or ""
-    first=body.splitlines()[0][:80] if body else ""
-    print(f"[{ts}] from={m[\"from\"]} thread={m[\"thread\"]}: {first}", flush=True)
+    if not (isinstance(m, dict) and isinstance(m.get("ts"),(int,float)) and all(isinstance(m.get(k),str) for k in ("from","to","thread","body"))): continue
+    if alias is None or not A.match(alias): continue
+    if m["from"]!=alias: continue
+    if m["to"]!=me: continue
+    mid=m.get("id")
+    k=(m["from"], mid if isinstance(mid,str) else "")
+    if k[1]:
+        if k in seen: continue
+        seen.add(k)
+    ts=time.strftime("%m-%d %H:%M", time.localtime(m["ts"]))
+    first=S(m["body"].splitlines()[0][:80]) if m["body"] else ""
+    frm=m["from"]; th=S(m["thread"])
+    print(f"[{ts}] from={frm} thread={th}: {first}", flush=True)
 '
       ;;
     cat)
       if [ $# -lt 1 ]; then echo "usage: msg cat <id|prefix>" >&2; return 2; fi
       MSG_ID="$1" MSG_DIR="$dir" python3 - <<'PY'
-import json, os, sys, hashlib, unicodedata
+import json, os, re, sys, hashlib, unicodedata
 from pathlib import Path
 d=Path(os.environ["MSG_DIR"]); needle=os.environ["MSG_ID"]
+A=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 # 4-char min prevents trivial prefixes returning near-everything; full id is 16.
 if len(needle) < 4:
     sys.exit("id prefix must be at least 4 chars")
@@ -219,16 +270,19 @@ hits=[]; seen=set()
 for lf in sorted(d.glob("log-*.jsonl")):
     if lf.is_symlink(): continue
     file_alias=lf.name[4:-6]
-    with open(lf) as f:
+    if not A.match(file_alias): continue
+    with open(lf, encoding="utf-8", errors="replace") as f:
         for ln in f:
             ln=ln.strip()
             if not ln: continue
             try: m=json.loads(ln)
             except json.JSONDecodeError: continue
-            if m.get("from")!=file_alias: continue
-            i=m.get("id") or cid(m)
-            if i in seen: continue
-            seen.add(i)
+            if not (isinstance(m, dict) and isinstance(m.get("ts"),(int,float)) and all(isinstance(m.get(k),str) for k in ("from","to","thread","body"))): continue
+            if m["from"]!=file_alias: continue
+            i=m.get("id")
+            if not (isinstance(i,str) and i): i=cid(m)
+            if (file_alias, i) in seen: continue
+            seen.add((file_alias, i))
             if i.startswith(needle): hits.append((i, m))
 if not hits: sys.exit(f"no message with id starting with {needle!r}")
 exact=[(i,m) for i,m in hits if i==needle]
@@ -248,9 +302,11 @@ PY
     log)
       local who="${1:-$me}"
       MSG_WHO="$who" MSG_DIR="$dir" python3 - <<'PY'
-import json, os, time, hashlib, unicodedata
+import json, os, re, time, hashlib, unicodedata
 from pathlib import Path
 d=Path(os.environ["MSG_DIR"]); who=os.environ["MSG_WHO"]
+A=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+S=lambda s: re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", s)
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
     if "body" in c: c["body"]=unicodedata.normalize("NFC", c["body"])
@@ -259,28 +315,31 @@ seen=set(); msgs=[]
 for lf in sorted(d.glob("log-*.jsonl")):
     if lf.is_symlink(): continue
     file_alias=lf.name[4:-6]
-    with open(lf) as f:
+    if not A.match(file_alias): continue
+    with open(lf, encoding="utf-8", errors="replace") as f:
         for ln in f:
             ln=ln.strip()
             if not ln: continue
             try: m=json.loads(ln)
             except json.JSONDecodeError: continue
-            if m.get("from")!=file_alias: continue
-            i=m.get("id") or cid(m)
-            if i in seen: continue
-            seen.add(i)
-            if who and who not in (m.get("from"), m.get("to")): continue
+            if not (isinstance(m, dict) and isinstance(m.get("ts"),(int,float)) and all(isinstance(m.get(k),str) for k in ("from","to","thread","body"))): continue
+            if m["from"]!=file_alias: continue
+            i=m.get("id")
+            if not (isinstance(i,str) and i): i=cid(m)
+            if (file_alias, i) in seen: continue
+            seen.add((file_alias, i))
+            if who and who not in (m["from"], m["to"]): continue
             m["_id"]=i; msgs.append(m)
-msgs.sort(key=lambda m: m.get("ts",0), reverse=True)
+msgs.sort(key=lambda m: m["ts"], reverse=True)
 for m in msgs:
-    ts=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(m.get("ts",0)))
+    ts=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(m["ts"]))
     print(f"id     {m['_id']}")
-    print(f"from   {m.get('from')} → {m.get('to')}")
+    print(f"from   {m['from']} → {m['to']}")
     print(f"ts     {ts}")
-    print(f"thread {m.get('thread')}")
+    print(f"thread {S(m['thread'])}")
     print()
-    for line in (m.get("body") or "").splitlines() or [""]:
-        print(f"    {line}")
+    for line in m["body"].splitlines() or [""]:
+        print(f"    {S(line)}")
     print()
 PY
       ;;
@@ -292,9 +351,10 @@ PY
         fi
       fi
       MSG_ME="$me" MSG_ONLY_ME="$only_me" MSG_DIR="$dir" python3 - <<'PY'
-import json, os, hashlib, unicodedata
+import json, os, re, hashlib, unicodedata
 from pathlib import Path
 d=Path(os.environ["MSG_DIR"]); me=os.environ["MSG_ME"]; only_me=os.environ["MSG_ONLY_ME"]=="1"
+A=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
     if "body" in c: c["body"]=unicodedata.normalize("NFC", c["body"])
@@ -303,64 +363,79 @@ seen=set()
 for lf in sorted(d.glob("log-*.jsonl")):
     if lf.is_symlink(): continue
     file_alias=lf.name[4:-6]
-    with open(lf) as f:
+    if not A.match(file_alias): continue
+    with open(lf, encoding="utf-8", errors="replace") as f:
         for ln in f:
             ln=ln.strip()
             if not ln: continue
             try: m=json.loads(ln)
             except json.JSONDecodeError: continue
-            if m.get("from")!=file_alias: continue
-            i=m.get("id") or cid(m)
-            if i in seen: continue
-            seen.add(i)
-            if only_me and m.get("to")!=me: continue
+            if not (isinstance(m, dict) and isinstance(m.get("ts"),(int,float)) and all(isinstance(m.get(k),str) for k in ("from","to","thread","body"))): continue
+            if m["from"]!=file_alias: continue
+            i=m.get("id")
+            if not (isinstance(i,str) and i): i=cid(m)
+            if (file_alias, i) in seen: continue
+            seen.add((file_alias, i))
+            if only_me and m["to"]!=me: continue
             print(json.dumps(m, ensure_ascii=False))
 PY
       ;;
     compact)
-      MSG_DIR="$dir" python3 - <<'PY'
-import json, os, hashlib, shutil, tempfile, unicodedata
+      MSG_ME="$me" MSG_DIR="$dir" python3 - <<'PY'
+import json, os, hashlib, shutil, sys, tempfile, unicodedata
 from pathlib import Path
-d=Path(os.environ["MSG_DIR"])
+d=Path(os.environ["MSG_DIR"]); me=os.environ["MSG_ME"]
 def cid(m):
     c={k:m[k] for k in ("ts","from","to","thread","body") if k in m}
     if "body" in c: c["body"]=unicodedata.normalize("NFC", c["body"])
     return hashlib.sha256(json.dumps(c, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
-before=0; after=0; touched=0; added_ids=0
-for lf in sorted(d.glob("log-*.jsonl")):
-    if lf.is_symlink(): continue
-    with open(lf) as f:
-        orig=[ln.strip() for ln in f if ln.strip()]
-    before += len(orig)
-    seen_here=set(); keep=[]; mutated=False
-    for ln in orig:
-        try: m=json.loads(ln)
-        except json.JSONDecodeError: continue
-        i=m.get("id") or cid(m)
-        if i in seen_here: continue
-        seen_here.add(i)
-        if "id" not in m:
-            m={"id": i, **m}
-            mutated=True; added_ids += 1
+# §5 single-writer: only our own log is ours to rewrite. Other writers' logs
+# may be mid-append (another session, a sync delivery) — never touch them.
+lf=d/f"log-{me}.jsonl"
+if lf.is_symlink(): sys.exit(f"refusing symlinked {lf.name}")
+if not lf.exists():
+    print(f"nothing to compact (no {lf.name})"); raise SystemExit
+st=lf.stat()
+with open(lf, encoding="utf-8", errors="replace") as f:
+    orig=[ln.rstrip("\n") for ln in f if ln.strip()]
+seen=set(); keep=[]; dropped=0; added_ids=0; bad=0
+for ln in orig:
+    try: m=json.loads(ln)
+    except json.JSONDecodeError:
+        # Unparseable bytes (e.g. crash-truncated line) are kept verbatim —
+        # they may be hand-recoverable; compact must never destroy data.
+        keep.append(ln); bad+=1; continue
+    if not isinstance(m, dict):
+        keep.append(ln); bad+=1; continue
+    i=m.get("id")
+    if not (isinstance(i,str) and i): i=cid(m)
+    if i in seen: dropped+=1; continue
+    seen.add(i)
+    if "id" not in m:
+        m={"id": i, **m}; added_ids+=1
         keep.append(json.dumps(m, ensure_ascii=False))
-    after += len(keep)
-    if len(keep) != len(orig) or mutated:
-        touched += 1
-        tmp=tempfile.NamedTemporaryFile(mode="w", dir=str(d), delete=False)
-        try:
-            tmp.writelines(k+"\n" for k in keep)
-            tmp.close()
-            # Preserve the original log's permissions (NamedTemporaryFile defaults
-            # to 0600, which would otherwise regress the 0644 that `send` writes).
-            shutil.copymode(str(lf), tmp.name)
-            os.replace(tmp.name, str(lf))
-        except BaseException:
-            # Interrupt / error mid-write: clean up the temp so it doesn't linger.
-            try: os.unlink(tmp.name)
-            except OSError: pass
-            raise
+    else:
+        keep.append(ln)
+if dropped or added_ids:
+    tmp=tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=str(d), delete=False)
+    try:
+        tmp.writelines(k+"\n" for k in keep)
+        tmp.close()
+        # Preserve the original log's permissions (NamedTemporaryFile defaults
+        # to 0600, which would otherwise regress the 0644 that `send` writes).
+        shutil.copymode(str(lf), tmp.name)
+        cur=lf.stat()
+        if (cur.st_mtime_ns, cur.st_size) != (st.st_mtime_ns, st.st_size):
+            sys.exit(f"{lf.name} changed during compact; re-run")
+        os.replace(tmp.name, str(lf))
+    except BaseException:
+        # Interrupt / error mid-write: clean up the temp so it doesn't linger.
+        try: os.unlink(tmp.name)
+        except OSError: pass
+        raise
 extra = f", filled id on {added_ids} legacy record(s)" if added_ids else ""
-print(f"compacted: {before} → {after} records ({touched} file(s) rewritten{extra})")
+warn = f", kept {bad} unparseable line(s)" if bad else ""
+print(f"compacted {lf.name}: {len(orig)} → {len(keep)} line(s), {dropped} duplicate(s) removed{extra}{warn}")
 PY
       ;;
     --version|-V|version)
@@ -382,14 +457,14 @@ Plumbing:
   msg cat <id|prefix>      pretty-print one record (min 4-char prefix)
   msg log [alias]          git-log style; all messages involving me (or alias)
   msg raw [all]            JSONL dump for jq / scripts
-  msg compact              within-file dedup; ensures id populated
+  msg compact              dedup own log; ensures id populated
 
   msg help
   msg --version
 
 dir:    \${AGENT_MESSAGE_DIR:-\${XDG_STATE_HOME:-\$HOME/.local/state}/agent-message}
 files:  \$DIR/log-<alias>.jsonl  (single-writer, union on read)
-alias:  \$(basename \$PWD), override via .agent-message file first line
+alias:  \$(basename \$PWD), override via .agent-message file first valid line
 EOF
       ;;
     *)

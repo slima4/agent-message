@@ -47,7 +47,7 @@ msg tail                  # follow live across all logs
 msg cat <id|prefix>       # pretty-print one record (min 4-char prefix)
 msg log [alias]           # git-log style, all messages involving me (or alias)
 msg raw [all]             # JSONL dump for jq / scripts
-msg compact               # within-file dedup; populate id on legacy records
+msg compact               # own-log dedup; populate id on legacy records
 msg help
 ```
 

@@ -1,6 +1,6 @@
 # SAMP — Simple Agent Message Protocol
 
-**Version 1** · 2026-04-25 · MIT licence applies to this document and any reference code.
+**Version 1** · revised 2026-08-08 · MIT licence applies to this document and any reference code.
 
 SAMP is a file-based protocol for asynchronous, durable, sync-safe message exchange between independent processes — typically AI agents (Claude Code, Cursor, Aider, custom CLIs) running locally on the same machine, or across machines that share a directory via Syncthing / Dropbox / iCloud / etc.
 
@@ -71,7 +71,8 @@ Threads group related messages. Two ways to derive `thread`:
 **4.1 Explicit override.** If `body` matches `^\s*\[thread:([^\]]+)\]\s*` (the leading whitespace, the bracketed token, and any trailing whitespace), the writer:
 
 - Strips the entire matched prefix from `body` — what remains is the stored body and the input to `id` (§3).
-- Sets `thread = <id>` (capture group 1, with surrounding whitespace stripped).
+- Sets `thread = <id>` (capture group 1, with ASCII control characters `U+0000–U+001F` and `U+007F` removed, then surrounding whitespace stripped).
+- If the result is empty (e.g. `[thread: ]`), the prefix is still stripped but `thread` falls back to §4.2 — an empty thread would silently collapse unrelated conversations.
 
 **4.2 Auto-derived.** Otherwise, on the first message of a thread:
 
@@ -108,27 +109,28 @@ Implementations:
 
 To read messages addressed to alias `<me>` (porcelain, "inbox" view):
 
-1. **mtime short-circuit (optional).** Stat all `$DIR/log-*.jsonl`. Compare `(max_mtime, file_count)` against `$DIR/.mtime-<me>` (if any). If unchanged, return "no new messages" without parsing.
+1. **mtime short-circuit (optional).** Stat all `$DIR/log-*.jsonl`. Compare `(max_mtime, file_count, total_size)` against `$DIR/.mtime-<me>` (if any). If unchanged, return "no new messages" without parsing. Total size is what catches appends within the same mtime tick (coarse-granularity filesystems) and sync deliveries that preserve an older sender mtime.
 2. **Watermark load (optional).** Read `$DIR/.seen-<me>` if present:
    ```json
-   {"ts": <int>, "ids": [<hex>, ...]}
+   {"ts": <int>, "ids": ["<from>:<id>", ...]}
    ```
-3. **Scan.** For each `$DIR/log-*.jsonl`, read line by line. For each parseable record where `to == me`:
+   Each entry is `from` and `id` joined by `:` (`:` cannot appear in an alias, §1).
+3. **Scan.** For each `$DIR/log-*.jsonl` whose filename alias passes §1, read line by line. Skip records that are malformed (unparseable JSON, missing fields, wrong types) — one bad record must not abort the read. For each valid record where `to == me`:
    - Compute or read `id`.
-   - Skip if seen this scan (dedup).
-   - Skip if `ts < watermark.ts` OR (`ts == watermark.ts` AND `id ∈ watermark.ids`).
+   - Skip if `(from, id)` seen this scan (dedup — scoped by sender so a forged id in another writer's log cannot suppress the genuine record).
+   - Skip if `ts < watermark.ts` OR `from:id ∈ watermark.ids`.
 4. **Sort** survivors by `ts`.
 5. **Output.**
-6. **Update watermark.** Set:
+6. **Update watermark.** With `now` = the reader's current Unix time:
    ```
-   new_ts  = max ts in output
-   new_ids = ids of records at ts == new_ts
-            (∪ previous watermark.ids if new_ts == previous.ts)
+   new_ts  = min(now, max ts in output)
+   new_ids = every shown record (this output ∪ previous watermark.ids)
+             with ts >= new_ts, as "from:id"
    ```
-   Write `{"ts": new_ts, "ids": new_ids}` atomically.
-7. **Update mtime cache.** Write `{"max_mtime": cur_max, "files": cur_count}`.
+   Write `{"ts": new_ts, "ids": new_ids}` atomically. On load, cap `watermark.ts` at `now` as well.
+7. **Update mtime cache.** Write `{"max_mtime": cur_max, "files": cur_count, "size": cur_size}`.
 
-The same-second-burst rule (`ts < since OR (ts == since AND id ∈ since_ids)`) handles 1-second clock resolution: two messages with the same epoch second remain distinct in the watermark.
+The `ids` set handles both 1-second clock resolution (two messages in the same epoch second stay distinct) and sender clock skew: capping `new_ts` at the reader's clock means a fast-clock sender cannot advance the watermark past honest senders — its already-shown messages ride in `ids` until the reader's clock catches up, instead of silently hiding later on-time messages.
 
 Three modes are common (and present in the reference implementation):
 
@@ -149,7 +151,7 @@ To reply to the most recent message addressed to `<me>`:
 
 ## 8. Sync semantics
 
-Because no file has two writers, syncing the directory between machines (Syncthing / Dropbox / iCloud) cannot create write conflicts. The same record may legitimately appear in two log files if the sync layer duplicates it, but readers dedup by `id` (§3) so each message is shown exactly once.
+Because no file has two writers, syncing the directory between machines (Syncthing / Dropbox / iCloud) cannot create write conflicts. The same record may legitimately appear in two log files if the sync layer duplicates it, but readers dedup by `(from, id)` (§3, §6) so each message is shown exactly once. The dedup key is scoped by sender: dedup on `id` alone would let a malicious writer suppress another sender's message by pre-publishing its content-addressed id.
 
 **Aliases MUST be globally unique within `$DIR`.** Running the same alias on two synced machines would put two writers on `log-<alias>.jsonl` — the one hard invariant of the protocol — and is undefined behaviour. Use distinct aliases per host, or do not sync `$DIR` between machines that both write.
 
@@ -164,7 +166,8 @@ A SAMP-conformant implementation MUST:
 - Use the schema in §2 with `id` computed per §3.
 - Honour the alias regex in §1.
 - Append-only, single-writer-per-log-file in §5.
-- On read, dedup by `id` and filter by `to`.
+- On read, dedup by `(from, id)` and filter by `to`.
+- Tolerate malformed records on read (skip, don't abort — §6.3).
 
 A SAMP-conformant implementation SHOULD:
 
@@ -191,6 +194,11 @@ Other agent CLIs / frameworks integrate by spawning the wrapper directly, or by 
 ## 11. Versioning
 
 This document specifies SAMP **v1**. Future versions, if any, will be additive: new optional fields, new optional reader modes, no breaking changes to the schema or single-writer invariant.
+
+Revisions within v1 (on-disk record format unchanged throughout):
+
+- **2026-08-08** — §4.1 control chars stripped from thread override, empty override falls back to §4.2; §6 watermark clock-capped with sender-scoped `"from:id"` ids, mtime cache gains total size, malformed records skipped on read; §8/§9 read-side dedup key scoped to `(from, id)`. Existing v1 logs need no migration; readers deduping by bare `id` should re-check §6/§9.
+- **2026-04-25** — initial publication.
 
 ## 12. Implementations
 
