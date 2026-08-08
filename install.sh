@@ -687,12 +687,14 @@ Use from any Claude Code session (any repo, any path):
 
   /message-send <recipient-alias> <body…>
   /message-inbox
+  /message-inbox 2            # the 2 latest, read or not
   /message-reply <body…>
 
 From a terminal (0 Claude tokens):
 
   msg send <to> <body…>
   msg              # unseen
+  msg 2            # the 2 latest, read or not
   msg reply <body> # reply to most recent
   msg tail         # follow live
 

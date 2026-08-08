@@ -1798,6 +1798,18 @@ test_installer_preserves_private_command_file_mode() {
   assert_eq "600" "$mode" "private command file mode preserved"
 }
 
+# The post-install banner is read once, at the moment a new mode is most likely to
+# stick. It drifted behind `inbox <n>` for a release; pin it to the porcelain.
+test_installer_banner_lists_count_mode() {
+  local out home="$TMP/banner-home"
+  mkdir -p "$home"
+  out=$( HOME="$home" "$SCRIPT_DIR/install.sh" --dir "$TMP/banner-msg" \
+           --bin "$home/.agent-message-cmd" --shell "$home/.agent-message.sh" ) || return 1
+  # Match the comment too: a bare "msg 2" would still pass if it drifted to "msg 25".
+  assert_contains "$out" "/message-inbox 2            # the 2 latest" "banner lists slash count" || return 1
+  assert_contains "$out" "msg 2            # the 2 latest" "banner lists shell count"
+}
+
 test_installer_help_includes_trailing_options() {
   local out
   out=$(HOME="$TMP/help-home" "$SCRIPT_DIR/install.sh" --help) || return 1
@@ -1911,6 +1923,7 @@ TESTS=(
   test_installer_replaces_destination_symlinks_without_following
   test_installer_preserves_private_message_dir_mode
   test_installer_preserves_private_command_file_mode
+  test_installer_banner_lists_count_mode
   test_installer_help_includes_trailing_options
 )
 
