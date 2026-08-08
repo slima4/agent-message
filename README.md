@@ -133,7 +133,7 @@ Each writer owns one file: `$DIR/log-<alias>.jsonl`. One message per line:
 ```
 
 - `/message-send <to> <body>` (or `msg send <to> <body>`) — appends one line to `log-<me>.jsonl`.
-- `/message-inbox` (or `msg`) — unions `log-*.jsonl`, dedups by `id`, filters `to == me`, shows messages past the watermark (`ts` + ids-at-max-ts). Prints full bodies, indented, in both default and `all`. Output is capped per run and spent newest-first; an elided body always states how much was cut — never silently.
+- `/message-inbox` (or `msg`) — unions `log-*.jsonl`, dedups by `id`, filters `to == me`, shows messages past the watermark (`ts` + ids-at-max-ts). Prints full bodies, indented. Default shows every unread message, however many; `<n>` (e.g. `inbox 2`) re-reads the N latest whether read or not, without touching the watermark — bounded, unlike `all`. Output is capped per run and spent newest-first; an elided body always states how much was cut — never silently.
 - `/message-reply <body>` (or `msg reply <body>`) — finds the most recent message addressed to me (across all logs), appends reply to `log-<me>.jsonl`. If two *different* senders tie at the newest timestamp, arrival order is unrecoverable — it lists the candidates and refuses rather than guess; use `send <from>` with `[thread:<thread>]` to pick.
 
 No server. No network. No port. Works offline.

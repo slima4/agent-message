@@ -304,6 +304,75 @@ test_inbox_budget_favours_newest() {
   return 0
 }
 
+# `all` is unbounded in message count — the body budget caps bytes, not records —
+# so a context-limited reader needs a bounded re-read. git log -2, essentially.
+test_inbox_count_bounded_reread() {
+  local i
+  for i in 1 2 3 4; do
+    ( cd "$TMP/foo" && printf 'msg%s\nbody %s' "$i" "$i" | "$WRAPPER" send bar ) >/dev/null
+  done
+  # Default is bounded by unread, not by count: 4 unread means all 4, not the last n.
+  local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "4 new from: foo" "default shows every unread message" || return 1
+  assert_contains "$out" "msg1" "default withholds nothing unread" || return 1
+
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox 2 )
+  # Already read above, so these come back only because count ignores read state.
+  assert_contains "$out" "msg3" "count shows 2nd-latest" || return 1
+  assert_contains "$out" "msg4" "count shows latest" || return 1
+  assert_not_contains "$out" "msg1" "count excludes older" || return 1
+  assert_not_contains "$out" "msg2" "count excludes older" || return 1
+  assert_contains "$out" "body 4" "count shows full bodies" || return 1
+  assert_contains "$out" "2 of 4 from: foo" "count reports what it withheld" || return 1
+
+  # Bounded re-read must not touch the watermark.
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
+  assert_contains "$out" "no new messages" "count left the watermark alone" || return 1
+
+  # A count larger than the store is not an error.
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox 99 )
+  assert_contains "$out" "4 of 4 from: foo" "oversized count clamps to what exists" || return 1
+
+  local s
+  # shellcheck source=shell/msg.sh
+  s=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg 2 )
+  assert_eq "$( cd "$TMP/bar" && "$WRAPPER" inbox 2 )" "$s" "wrapper and shell agree on count mode"
+}
+
+test_inbox_count_rejects_zero() {
+  ( cd "$TMP/foo" && echo hi | "$WRAPPER" send bar ) >/dev/null
+  local out rc
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox 0 2>&1 ); rc=$?
+  assert_eq "1" "$rc" "wrapper rejects count 0" || return 1
+  assert_contains "$out" "count must be >= 1" "wrapper explains" || return 1
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg 0 2>&1 ); rc=$?
+  assert_eq "2" "$rc" "shell rejects count 0" || return 1
+  assert_contains "$out" "count must be >= 1" "shell explains" || return 1
+  # A non-numeric mode still reports unknown, not a count.
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox bogus 2>&1 ); rc=$?
+  assert_eq "1" "$rc" "unknown mode still rejected" || return 1
+  assert_contains "$out" "unknown mode: bogus" "unknown mode message intact"
+}
+
+# str.isdigit() accepts digit-like characters int() then rejects ('²' -> ValueError,
+# an uncaught traceback) and ones the shell's [!0-9] test would not ('٢'). Count
+# parsing is ASCII-only in both impls so neither crashes nor diverges.
+test_inbox_count_rejects_non_ascii_digits() {
+  ( cd "$TMP/foo" && echo hi | "$WRAPPER" send bar ) >/dev/null
+  local out rc ch
+  for ch in '²' '٢'; do
+    out=$( cd "$TMP/bar" && "$WRAPPER" inbox "$ch" 2>&1 ); rc=$?
+    assert_eq "1" "$rc" "wrapper rejects '$ch'" || return 1
+    assert_contains "$out" "unknown mode" "wrapper reports unknown mode for '$ch'" || return 1
+    assert_not_contains "$out" "Traceback" "wrapper must not crash on '$ch'" || return 1
+    # shellcheck source=shell/msg.sh
+    out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg "$ch" 2>&1 ); rc=$?
+    assert_eq "1" "$rc" "shell rejects '$ch'" || return 1
+    assert_contains "$out" "unknown subcommand" "shell reports unknown for '$ch'" || return 1
+  done
+}
+
 test_inbox_empty_body_marked() {
   ( cd "$TMP/foo" && printf '' | "$WRAPPER" send bar ) >/dev/null
   local out; out=$( cd "$TMP/bar" && "$WRAPPER" inbox )
@@ -1754,6 +1823,9 @@ TESTS=(
   test_inbox_budget_bounds_total_output
   test_inbox_all_mode_shows_full_body
   test_inbox_budget_favours_newest
+  test_inbox_count_bounded_reread
+  test_inbox_count_rejects_zero
+  test_inbox_count_rejects_non_ascii_digits
   test_inbox_empty_body_marked
   test_wrapper_thread_override
   test_wrapper_id_is_content_addressed

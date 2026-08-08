@@ -136,6 +136,7 @@ Three modes are common (and present in the reference implementation):
 
 - **default** — apply watermark, update on success
 - **all** — show every record, no watermark update
+- **`<n>`** — show the `n` latest records regardless of watermark state, no watermark update. Distinct from `default`, which is bounded by *unread* rather than by count: `all` is unbounded in record count, so on a long archive it floods a context-limited reader, and a bounded re-read is the safe alternative.
 - **raw** — emit JSONL verbatim, no formatting, no watermark update
 
 Modes other than `default` are SHOULD-implement, not MUST.

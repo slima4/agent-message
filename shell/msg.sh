@@ -8,6 +8,7 @@
 #   msg reply <body...>        # reply to most recent inbox message
 #   msg                # unseen messages (default); updates watermark
 #   msg inbox          # same as above
+#   msg <n>            # the n latest, read or not; no watermark change (msg 2)
 #   msg all            # every message to this repo, no watermark change
 #   msg tail           # follow new arrivals across all agent logs
 #
@@ -45,6 +46,13 @@ msg() {
   mkdir -p "$dir" 2>/dev/null
   local cmd="${1:-new}"
   shift 2>/dev/null || true
+  # Numeric subcommand = bounded re-read (git log -2): the n latest, read or not.
+  local last=0
+  case "$cmd" in
+    ''|*[!0-9]*) ;;
+    *) if [ "$cmd" -lt 1 ] 2>/dev/null; then echo "msg <n>: count must be >= 1" >&2; return 2; fi
+       last="$cmd"; cmd=all ;;
+  esac
   case "$cmd" in
     send)
       if [ $# -lt 2 ]; then echo "usage: msg send <to> <body...>" >&2; return 2; fi
@@ -124,10 +132,11 @@ PY
     new|inbox|all)
       local mode=new
       [ "$cmd" = all ] && mode=all
-      MSG_ME="$me" MSG_DIR="$dir" MSG_MODE="$mode" python3 - <<'PY'
+      MSG_ME="$me" MSG_DIR="$dir" MSG_MODE="$mode" MSG_LAST="$last" python3 - <<'PY'
 import json, os, re, time, hashlib, unicodedata
 from pathlib import Path
 me=os.environ["MSG_ME"]; d=Path(os.environ["MSG_DIR"]); mode=os.environ["MSG_MODE"]
+last=int(os.environ.get("MSG_LAST","0"))
 A=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 S=lambda s: re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", s)
 # Body chars printed per run — bounds a huge record from flooding the terminal.
@@ -197,6 +206,8 @@ for lf in log_paths:
             m["_k"]=k; m["_id"]=mid
             msgs.append(m)
 msgs.sort(key=lambda m: m["ts"])
+total=len(msgs)
+if last: msgs=msgs[-last:]
 if not msgs:
     print(f"{'no new messages' if mode=='new' else 'no messages'} (as {me})")
     if mode=="new":
@@ -218,7 +229,9 @@ for n, m in enumerate(msgs):
     if len(shown)<len(body): print(f"  … +{len(body)-len(shown)} chars elided — msg cat {m['_id'][:8]}")
 senders=sorted({m["from"] for m in msgs})
 # "new" only in default: all re-reads already-seen messages, none of them new.
-print(f"{len(msgs)} {'new' if mode=='new' else 'total'} from: {', '.join(senders)} (as {me})")
+# A bounded re-read says what it withheld, same rule as body elision.
+lbl=f"{len(msgs)} of {total}" if last else f"{len(msgs)} {'new' if mode=='new' else 'total'}"
+print(f"{lbl} from: {', '.join(senders)} (as {me})")
 if mode=="new":
     # Watermark capped at local now so a fast-clock sender can't advance it past
     # honest senders; ids carry every shown record with ts >= the cap.
@@ -472,6 +485,7 @@ msg — agent-message shell helper
 Porcelain:
   msg                      show unseen (updates watermark)
   msg inbox                alias of default
+  msg <n>                  the n latest, read or not (msg 2); no watermark change
   msg all                  every message to this repo
   msg send <to> <body>     append to your per-agent log
   msg reply <body>         reply to most recent inbox message

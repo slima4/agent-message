@@ -156,7 +156,17 @@ def reply(args: list[str]) -> None:
 
 def inbox(args: list[str]) -> None:
     mode = args[0] if args else "default"
-    if mode not in ("default", "all", "raw"): sys.exit(f"unknown mode: {mode}")
+    last = 0
+    # Numeric mode = bounded re-read (git log -2): the n latest, read or not.
+    # Distinct from default, which is bounded by unread, not by count. `all` is
+    # unbounded in message count, so on a long archive it floods the reader.
+    # ASCII digits only, matching shell/msg.sh's `*[!0-9]*` test exactly. str.isdigit()
+    # accepts superscripts ('²') that int() then rejects, and Arabic-Indic digits the
+    # shell would not — one crashes, the other diverges.
+    if re.fullmatch(r"[0-9]+", mode):
+        last, mode = int(mode), "all"
+        if last < 1: sys.exit("inbox <n>: count must be >= 1")
+    elif mode not in ("default", "all", "raw"): sys.exit(f"unknown mode: {mode}")
     who = me(); d = D()
     d.mkdir(parents=True, exist_ok=True)
     sf = d / f".seen-{who}"
@@ -190,6 +200,8 @@ def inbox(args: list[str]) -> None:
         if mode == "default" and (t < since or k in since_ids): continue
         out.append((i, m))
     out.sort(key=lambda x: x[1]["ts"])
+    total = len(out)
+    if last: out = out[-last:]
     if not out:
         print(f"{'no new messages' if mode == 'default' else 'no messages'} (as {who})")
         if mode == "default": _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count, "size": cur_size}))
@@ -222,7 +234,9 @@ def inbox(args: list[str]) -> None:
         _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count, "size": cur_size}))
     senders = sorted({m["from"] for _, m in out})
     # "new" only in default: all re-reads already-seen messages, none of them new.
-    print(f"{len(out)} {'new' if mode == 'default' else 'total'} from: {', '.join(senders)} (as {who})")
+    # A bounded re-read says what it withheld, same rule as body elision.
+    lbl = f"{len(out)} of {total}" if last else f"{len(out)} {'new' if mode == 'default' else 'total'}"
+    print(f"{lbl} from: {', '.join(senders)} (as {who})")
 
 
 OPS = {"send": send, "inbox": inbox, "reply": reply}

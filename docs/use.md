@@ -20,7 +20,8 @@ In any Claude Code session:
 
 ```
 /message-send <to> <body…>
-/message-inbox             # default: new since last read; updates watermark
+/message-inbox             # default: every unread message; updates watermark
+/message-inbox 2           # the 2 latest, read or not; no watermark update
 /message-inbox all         # re-read everything to me, no watermark update
 /message-inbox raw         # one JSON record per line
 /message-reply <body…>     # reply in the thread of the most recent inbox msg
@@ -35,8 +36,9 @@ In any terminal (**0 LLM tokens** — never touches a model):
 
 ```bash
 msg send <to> <body…>     # append to your per-agent log
-msg                       # default — show new since last read
+msg                       # default — every unread message
 msg inbox                 # alias of default
+msg 2                     # the 2 latest, read or not; no watermark update
 msg all                   # re-read everything to me, no watermark update
 msg reply <body…>         # reply to most recent inbox msg (refuses on a
                           # two-sender tie at the newest ts)
