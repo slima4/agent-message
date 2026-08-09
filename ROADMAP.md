@@ -16,6 +16,9 @@ git-inspired primitives already shipped:
 - ✅ Watermark with ids-at-max-ts (handles same-second bursts)
 - ✅ Vendor-neutral SAMP spec ([SPEC.md](SPEC.md)) + reference implementation
 - ✅ CI: matrix tests on Ubuntu + macOS, docs deploy, shellcheck
+- ✅ Reads survive an unwritable message dir (sandboxed agent, read-only sync mount) — warn once, exit 0
+- ✅ Install reports integration state; `--integrate=select` menu for picking tools, per-repo ones included
+- ✅ `--integrate=codex` also grants the message dir a sandbox writable root, so read markers actually save
 
 ## On the table (only if warranted)
 

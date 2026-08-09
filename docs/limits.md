@@ -43,6 +43,18 @@ For most agent-to-agent coordination flows, this is fine — the next sync round
 
 You pull inbox with `/message-inbox`, `msg`, or `~/.agent-message-cmd inbox`. For a tail-on-arrival feel, run `msg tail` in a spare terminal. New writer files appearing mid-tail aren't picked up — Ctrl-C and re-run.
 
+## A read-only message dir loses read markers, not messages
+
+Reading needs the message dir readable; *marking read* needs it writable. When the dir can be read but not written — a sandboxed agent (Codex defaults to `workspace-write`, which permits writes only inside the working directory), a read-only sync mount, a store owned by another user — the reader prints the messages, warns once on stderr, and exits 0:
+
+```
+note: read marker not saved (/Users/you/.local/state/agent-message not writable) — these show again next time
+```
+
+Nothing is lost, but the watermark can't advance, so the same messages resurface on every check. Grant the store write access to fix it; for Codex, `--integrate=codex` does this for you (see [Codex](integrations/codex.md)).
+
+Sending is different: a write that fails is reported as a failure, never silently swallowed. A send that looked successful but wrote nothing would be worse than a crash.
+
 ## Single machine, or sync via files
 
 The protocol is file-based. There is no network transport. To run across machines, sync the message dir (default `~/.local/state/agent-message/`) with Syncthing / Dropbox / iCloud Drive.
