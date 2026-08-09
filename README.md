@@ -73,7 +73,7 @@ git clone https://github.com/slima4/agent-message && cd agent-message && ./insta
 
 Installs three slash commands into `~/.claude/commands/`, a `msg` shell function at `~/.agent-message.sh` (sourced from `~/.zshrc` / `~/.bashrc`), a Python wrapper at `~/.agent-message-cmd` that any agent can spawn, and the shared message dir at `${XDG_STATE_HOME:-~/.local/state}/agent-message/`.
 
-Idempotent — safe to re-run. Open a new terminal after first install so the shell function loads. Wire up other tools with `--integrate=auto`, or pick them individually — see [Install](https://slima4.github.io/agent-message/install/#integrations) for the full flag table and [Uninstall](https://slima4.github.io/agent-message/install/#uninstall).
+Idempotent — safe to re-run. Open a new terminal after first install so the shell function loads. Install ends by naming any detected-but-unwired tool. Wire them with `--integrate=auto`, `--integrate=select` for a menu, or one at a time — see [Install](https://slima4.github.io/agent-message/install/#integrations) for the full flag table and [Uninstall](https://slima4.github.io/agent-message/install/#uninstall).
 
 ## Use
 

@@ -1419,6 +1419,102 @@ test_install_integrate_copilot_cli_preserves_existing_instructions() {
   fi
 }
 
+test_install_hint_lists_detected_unwired_global() {
+  local fake_home="$TMP/hint-home"
+  mkdir -p "$fake_home/.codex" "$fake_home/.cursor"
+  _iargs "$fake_home"
+
+  local out; out=$(HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${_IARGS[@]}" 2>&1)
+  assert_contains "$out" "Not wired yet" "hint header" || return 1
+  assert_contains "$out" "--integrate=codex" "codex offered" || return 1
+  assert_contains "$out" "--integrate=cursor" "cursor offered" || return 1
+  # With nothing wired the `agents:` branch is skipped. Regression guard: doing
+  # that with a bare `[[ ]] &&` returned 1 and set -e killed the rest of the hint.
+  assert_contains "$out" "--integrate=select" "hint not truncated" || return 1
+  # copilot-cli has no signal in this fake HOME, and per-repo writers never appear.
+  assert_not_contains "$out" "--integrate=copilot-cli" "undetected tool not offered" || return 1
+  assert_not_contains "$out" "--integrate=zed" "per-repo writer not offered"
+}
+
+test_install_hint_omits_wired_tool() {
+  local fake_home="$TMP/hint-wired-home"
+  mkdir -p "$fake_home/.codex" "$fake_home/.cursor"
+  _iargs "$fake_home"
+
+  _install "$fake_home" "${_IARGS[@]}" --integrate=codex || return 1
+  local out; out=$(HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${_IARGS[@]}" 2>&1)
+  assert_not_contains "$out" "--integrate=codex" "wired tool dropped from hint" || return 1
+  assert_contains "$out" "agents:   codex" "wired tool named in the aligned block" || return 1
+  assert_contains "$out" "--integrate=cursor" "unwired tool still offered"
+}
+
+test_install_hint_confirms_when_all_wired() {
+  local fake_home="$TMP/hint-allwired-home"
+  mkdir -p "$fake_home/.codex"
+  _iargs "$fake_home"
+
+  _install "$fake_home" "${_IARGS[@]}" --integrate=codex || return 1
+  local out; out=$(HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${_IARGS[@]}" 2>&1)
+  assert_not_contains "$out" "Not wired yet" "nothing left to offer" || return 1
+  assert_contains "$out" "agents:   codex" "all-wired confirmation"
+}
+
+test_install_hint_silent_when_nothing_detected() {
+  local fake_home="$TMP/hint-quiet-home"
+  _iargs "$fake_home"
+  local out; out=$(HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${_IARGS[@]}" 2>&1)
+  assert_not_contains "$out" "Not wired yet" "no hint without signals" || return 1
+  assert_not_contains "$out" "agents:" "no agents row without signals"
+}
+
+test_install_select_without_tty_falls_back_to_auto() {
+  local fake_home="$TMP/select-notty-home"
+  mkdir -p "$fake_home/.codex"
+  _iargs "$fake_home"
+
+  local out
+  out=$(HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${_IARGS[@]}" --integrate=select </dev/null 2>&1)
+  assert_contains "$out" "falling back to auto" "non-TTY notice" || return 1
+  assert_file_exists "$fake_home/.codex/AGENTS.md"
+}
+
+# A cancelled (or non-TTY) `--uninstall --integrate=select` must stay a partial
+# uninstall. Regression guard: an empty selection previously read as "no
+# --integrate given" and escalated to a full uninstall.
+test_install_select_uninstall_keeps_core_install() {
+  local fake_home="$TMP/select-uninstall-home"
+  mkdir -p "$fake_home/.codex"
+  _iargs "$fake_home"
+
+  _install "$fake_home" "${_IARGS[@]}" --integrate=codex || return 1
+  HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${_IARGS[@]}" --uninstall --integrate=select \
+    </dev/null >/dev/null 2>&1 || return 1
+  assert_file_missing "$fake_home/.codex/AGENTS.md" || return 1
+  assert_file_exists "$fake_home/.agent-message-cmd" || return 1
+  assert_file_exists "$fake_home/.claude/commands/message-send.md"
+}
+
+# Drives the real menu over a pty. Skipped where `expect` is unavailable; the
+# non-TTY fallback tests above cover the rest of the path.
+test_install_select_menu_picks_by_number() {
+  command -v expect >/dev/null 2>&1 || { echo "  (skipped: expect not installed)"; return 0; }
+  local fake_home="$TMP/select-tty-home" repo="$TMP/select-tty-repo"
+  mkdir -p "$fake_home/.codex" "$fake_home/.cursor" "$repo"
+  _iargs "$fake_home"
+
+  # [4] = codex (global). Cursor is detected but unpicked, so it must stay untouched.
+  ( cd "$repo" && HOME="$fake_home" expect -c "
+    set timeout 30
+    spawn $SCRIPT_DIR/install.sh ${_IARGS[*]} --integrate=select
+    expect \">\"
+    send \"4\r\"
+    expect eof
+  " ) >/dev/null 2>&1 || return 1
+  assert_file_exists "$fake_home/.codex/AGENTS.md" || return 1
+  assert_file_missing "$fake_home/.cursor/rules/agent-message.mdc" || return 1
+  assert_file_missing "$repo/.rules"
+}
+
 test_install_integrate_zed_preserves_user_content() {
   local fake_home="$TMP/zed-home"
   local fake_repo="$TMP/zed-repo"
@@ -2061,6 +2157,13 @@ TESTS=(
   test_install_integrate_codex_preserves_existing_config_toml
   test_install_integrate_codex_refuses_existing_sandbox_table
   test_install_integrate_codex_preserves_existing_agents_md
+  test_install_hint_lists_detected_unwired_global
+  test_install_hint_omits_wired_tool
+  test_install_hint_confirms_when_all_wired
+  test_install_hint_silent_when_nothing_detected
+  test_install_select_without_tty_falls_back_to_auto
+  test_install_select_uninstall_keeps_core_install
+  test_install_select_menu_picks_by_number
   test_install_integrate_zed_preserves_user_content
   test_install_integrate_zed_empty_file_removed
   test_install_integrate_zed_works_in_non_git_dir

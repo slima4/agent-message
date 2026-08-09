@@ -43,8 +43,43 @@ Wire up other agent tools with one flag. Global integrations install once and co
 | `--integrate=zed` | per-repo | `./.rules` |
 | `--integrate=all` | mixed | every flag above except `antigravity-repo` |
 | `--integrate=auto` | mixed | detect installed tools and integrate them |
+| `--integrate=select` | mixed | interactive menu of every tool with its state |
 
 `auto` only runs the global integrations — a global signal ("you have Zed installed") says nothing about whether the current directory is the repo where per-repo rules belong. Per-tool guides: [`integrations/`](integrations/index.md).
+
+Every `./install.sh` reports integration state, so nothing installs silently half-connected. Wired tools appear as an `agents:` row inside the main block; anything detected but unwired gets its own paragraph with the command to run:
+
+```
+  commands: ~/.claude/commands/{message-send,message-inbox,message-reply}.md
+  wrapper:  ~/.agent-message-cmd
+  dir:      ~/.local/state/agent-message  (per-agent logs: log-<alias>.jsonl)
+  agents:   antigravity, codex
+
+Not wired yet (detected on this machine):
+  cursor       → ./install.sh --integrate=cursor
+
+  all at once: ./install.sh --integrate=auto
+  or pick from a menu: ./install.sh --integrate=select
+```
+
+`--integrate=select` opens a menu instead. It is the only mode that offers the per-repo writers, because you can see which directory they would write to before confirming:
+
+```
+agent-message integrations   (cwd: /Users/you/dev/my-web)
+
+  [1] cursor            global       detected
+  [2] copilot-cli       global       not found
+  [3] antigravity       global       WIRED
+  [4] codex             global       detected
+  [5] copilot           ./my-web     detected
+  [6] antigravity-repo  ./my-web     detected
+  [7] zed               ./my-web     not found
+
+Numbers to pick (space-separated), a=all detected global, Enter=none, q=quit
+> 4 5
+```
+
+`a` picks the detected global tools only — same set as `auto`. Per-repo writers need an explicit number. The menu needs a terminal; piped into `curl … | bash` it prints a notice and falls back to `auto`. It also works with `--uninstall`, where wired tools are marked `WIRED`.
 
 ## Requirements
 

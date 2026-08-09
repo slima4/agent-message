@@ -25,6 +25,11 @@
 #                                           Per-repo writers (copilot, zed, antigravity-repo)
 #                                           are NOT auto-included: run them explicitly from
 #                                           inside the target repo.
+#                         select            interactive menu: every tool with its detection
+#                                           state, per-repo ones labelled with the cwd they
+#                                           would write to. Needs a terminal; falls back to
+#                                           auto when stdin/stderr is not a TTY. Works with
+#                                           --uninstall too (wired tools are marked).
 #                       With --uninstall, strips only listed tools. Without
 #                       --uninstall, integrates them on top of main install.
 #   --uninstall         Remove installed commands, wrapper, shell helper, message dir,
@@ -174,6 +179,121 @@ expand_integrations() {
       echo "$out";;
     *) echo "${1//,/ }";;
   esac
+}
+
+# Single source of truth for detection + status display: name|scope|target|signals.
+# `signals` is a space-separated list of paths/globs; the tool counts as detected
+# when any one exists. Signals for the per-repo writers are used ONLY by the
+# select menu and the status line — never by `auto`, which stays global-only for
+# the reason documented in expand_integrations.
+integration_rows() {
+  cat <<ROWS
+cursor|global|$HOME/.cursor/rules/agent-message.mdc|$HOME/.cursor
+copilot-cli|global|$HOME/.copilot/copilot-instructions.md|$HOME/.copilot
+antigravity|global|$HOME/.gemini/AGENTS.md|$HOME/.gemini
+codex|global|$HOME/.codex/AGENTS.md|$HOME/.codex
+copilot|repo|.github/copilot-instructions.md|$HOME/.config/github-copilot $HOME/.vscode/extensions/github.copilot*
+antigravity-repo|repo|AGENTS.md|$HOME/.gemini
+zed|repo|.rules|$HOME/.config/zed $HOME/.zed
+ROWS
+}
+
+# Unquoted expansion is deliberate: it splits the signal list AND globs each entry.
+# shellcheck disable=SC2086
+tool_detected() {
+  local g
+  for g in $1; do [[ -e "$g" ]] && return 0; done
+  return 1
+}
+
+# Both writers (marker_block, cursor_block) embed this anchor, so one grep covers all.
+tool_wired() {
+  [[ -f "$1" ]] && grep -qF '>>> agent-message >>>' "$1" 2>/dev/null
+}
+
+# Printed after a plain install: names global tools that are present on the machine
+# but not wired up, with the exact command. Silent only when nothing is detected at
+# all — an all-wired machine still gets a one-line confirmation, otherwise a run
+# that found and checked everything looks identical to one that checked nothing.
+integration_hint() {
+  local mode="$1" name scope target signals wired="" todo=""
+  while IFS='|' read -r name scope target signals; do
+    [[ "$scope" == global ]] || continue
+    if tool_wired "$target"; then wired="$wired $name"; continue; fi
+    tool_detected "$signals" && todo="$todo $name"
+  done <<< "$(integration_rows)"
+  # Wired tools ride in the aligned commands:/wrapper:/dir:/shell: block — a
+  # free-floating line further down the banner is unfindable by eye. Unwired
+  # ones get their own paragraph because they carry commands to copy.
+  # Every branch below is an explicit `if`: a bare `[[ ]] && printf` evaluates to
+  # 1 when the test fails, and under `set -e` that kills this whole function
+  # (it runs inside $(...)), truncating the hint to nothing.
+  if [[ "$mode" == row ]]; then
+    [[ -n "$wired" ]] || return 0
+    local list="${wired# }"
+    printf '\n  agents:   %s' "${list// /, }"
+    return 0
+  fi
+  [[ -n "$todo" ]] || return 0
+  printf '\n\nNot wired yet (detected on this machine):\n'
+  for name in $todo; do
+    printf '  %-12s → %s/install.sh --integrate=%s\n' "$name" "$SCRIPT_DIR" "$name"
+  done
+  printf '\n  all at once: %s/install.sh --integrate=auto\n' "$SCRIPT_DIR"
+  printf '  or pick from a menu: %s/install.sh --integrate=select' "$SCRIPT_DIR"
+}
+
+# Interactive picker. Menu goes to stderr so the chosen list can be captured on
+# stdout by the caller. `a` means all detected GLOBAL tools — same set as `auto`.
+# Per-repo writers must be picked by number: a blanket "all" run from the wrong
+# folder is exactly the footgun `auto` exists to avoid.
+select_integrations() {
+  # stdin must be readable and stderr visible. Deliberately NOT -t 1: the caller
+  # captures stdout via $(...), so fd 1 is a pipe on every real invocation.
+  if [[ ! -t 0 || ! -t 2 ]]; then
+    echo "  --integrate=select needs a terminal; falling back to auto" >&2
+    expand_integrations auto
+    return 0
+  fi
+
+  local rows=() row name scope target signals i=1 where status line out="" tok idx
+  while IFS='|' read -r name scope target signals; do
+    rows+=("$name|$scope|$target|$signals")
+  done <<< "$(integration_rows)"
+
+  printf '\nagent-message integrations   (cwd: %s)\n\n' "$PWD" >&2
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name scope target signals <<< "$row"
+    [[ "$scope" == repo ]] && where="./${PWD##*/}" || where="global"
+    if tool_wired "$target"; then status="WIRED"
+    elif tool_detected "$signals"; then status="detected"
+    else status="not found"; fi
+    printf '  [%d] %-17s %-12s %s\n' "$i" "$name" "$where" "$status" >&2
+    i=$((i+1))
+  done
+  printf '\nNumbers to pick (space-separated), a=all detected global, Enter=none, q=quit\n> ' >&2
+
+  read -r line || line=""
+  case "$line" in
+    q|Q) return 0;;
+    a|A)
+      for row in "${rows[@]}"; do
+        IFS='|' read -r name scope target signals <<< "$row"
+        [[ "$scope" == global ]] || continue
+        tool_detected "$signals" && out="$out $name"
+      done;;
+    *)
+      for tok in $line; do
+        case "$tok" in ''|*[!0-9]*) echo "  ignoring: $tok" >&2; continue;; esac
+        idx=$((tok - 1))
+        if [[ $idx -lt 0 || $idx -ge ${#rows[@]} ]]; then
+          echo "  out of range: $tok" >&2; continue
+        fi
+        IFS='|' read -r name scope target signals <<< "${rows[$idx]}"
+        out="$out $name"
+      done;;
+  esac
+  echo "$out"
 }
 
 cursor_block() {
@@ -652,8 +772,20 @@ PY
   fi
 }
 
+# Resolve the interactive picker before any install work: the user answers first,
+# then the run proceeds non-interactively. Must sit after the function defs above.
+# SELECT_MODE is remembered because an empty selection under --uninstall must NOT
+# read as "no --integrate given" — that would escalate a cancelled menu into a
+# full uninstall of commands, wrapper, shell helper and logs.
+SELECT_MODE=0
+if [[ "$INTEGRATE" == "select" ]]; then
+  SELECT_MODE=1
+  INTEGRATE=$(select_integrations)
+  [[ -n "${INTEGRATE// /}" ]] || echo "  no integrations selected" >&2
+fi
+
 if [[ "$UNINSTALL" -eq 1 ]]; then
-  if [[ -n "$INTEGRATE" ]]; then
+  if [[ -n "${INTEGRATE// /}" || "$SELECT_MODE" -eq 1 ]]; then
     # Partial: integrations only. Leave main install alone.
     echo "Removing integrations:"
     run_uninstall_integrate
@@ -736,17 +868,23 @@ if [[ "$INSTALL_SHELL" -eq 1 ]]; then
 fi
 
 INTEGRATE_NOTE=""
-if [[ -n "$INTEGRATE" ]]; then
+if [[ -n "${INTEGRATE// /}" ]]; then
   INTEGRATE_NOTE=$'\n\nIntegrations:\n'
   INTEGRATE_NOTE+="$(run_integrate)"
 fi
+
+# Computed after run_integrate so anything just wired counts as wired. Two pieces:
+# the aligned `agents:` row belongs inside the commands:/wrapper:/dir: block, the
+# actionable paragraph belongs below the per-run "Integrations:" output.
+AGENTS_ROW="$(integration_hint row)"
+HINT_NOTE="$(integration_hint todo)"
 
 cat <<EOF
 agent-message installed.
 
   commands: $COMMANDS_DIR/{message-send,message-inbox,message-reply}.md
   wrapper:  $BIN_DST
-  dir:      $MSG_DIR  (per-agent logs: log-<alias>.jsonl)$SHELL_NOTE$INTEGRATE_NOTE
+  dir:      $MSG_DIR  (per-agent logs: log-<alias>.jsonl)$SHELL_NOTE$AGENTS_ROW$INTEGRATE_NOTE$HINT_NOTE
 
 Use from any Claude Code session (any repo, any path):
 
