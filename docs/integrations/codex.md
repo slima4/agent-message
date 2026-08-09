@@ -8,7 +8,27 @@
 ./install.sh --integrate=codex
 ```
 
-Appends a marker block to `~/.codex/AGENTS.md`. **One install, every repo covered.** Idempotent: re-runs don't duplicate. Existing user content preserved.
+Writes two things:
+
+1. A marker block in `~/.codex/AGENTS.md` — teaches Codex the three wrapper commands. **One install, every repo covered.**
+2. A marker block in `~/.codex/config.toml` — adds the message dir to the sandbox's writable roots.
+
+Both are idempotent; re-runs don't duplicate, existing user content is preserved, and `--uninstall --integrate=codex` strips both.
+
+### Why the config.toml part is needed
+
+Codex defaults to the `workspace-write` sandbox: it may read anywhere but write only inside the working directory. The message store lives at `${XDG_STATE_HOME:-~/.local/state}/agent-message/`, outside any repo — so reading the inbox succeeds while saving the read marker fails, and **the same messages resurface on every check**. The installer adds:
+
+```toml
+[sandbox_workspace_write]
+writable_roots = ["/Users/<you>/.local/state/agent-message"]
+```
+
+Per-launch equivalent, if you'd rather not persist it: `codex --add-dir ~/.local/state/agent-message`.
+
+If your `config.toml` already declares `[sandbox_workspace_write]`, the installer **will not touch it** — a second table of the same name is a TOML duplicate-table error that breaks Codex. It prints the path to add to your existing `writable_roots` instead.
+
+Reading never depends on this. With no writable root, the wrapper prints the messages, warns once on stderr, and exits 0 — only the read marker is lost.
 
 ## Per-repo opt-in
 

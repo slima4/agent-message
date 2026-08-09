@@ -513,8 +513,73 @@ integrate_copilot_cli()      { integrate_global_md  "copilot-cli"      "$HOME/.c
 uninstall_copilot_cli()      { uninstall_global_md  "$HOME/.copilot/copilot-instructions.md"; }
 
 # OpenAI Codex CLI: reads ~/.codex/AGENTS.md globally.
-integrate_codex()            { integrate_global_md  "codex"            "$HOME/.codex/AGENTS.md"; }
-uninstall_codex()            { uninstall_global_md  "$HOME/.codex/AGENTS.md"; }
+#
+# AGENTS.md alone is not enough. Under the default `workspace-write` sandbox Codex
+# may only write inside cwd, so reading the inbox succeeds but saving the read
+# marker in $MSG_DIR fails — messages re-show forever. `sandbox_workspace_write.
+# writable_roots` is the persistent fix (the per-launch equivalent is `--add-dir`).
+#
+# TOML, not markdown, so this cannot reuse marker_block: `<!-- -->` is not a TOML
+# comment. It also has a conflict case the markdown writers don't — appending a
+# second [sandbox_workspace_write] table when the user already declared one is a
+# TOML duplicate-table error that breaks Codex outright. Detect and refuse instead.
+codex_sandbox_toml() {
+  python3 - "$HOME/.codex/config.toml" "$MSG_DIR" <<'PY'
+import errno, json, os, re, sys
+p, msg_dir = sys.argv[1], sys.argv[2]
+OPEN, CLOSE = "# >>> agent-message >>>", "# <<< agent-message <<<"
+block = f'\n{OPEN}\n[sandbox_workspace_write]\nwritable_roots = [{json.dumps(msg_dir)}]\n{CLOSE}\n'
+PAT = re.compile(rf"(?:^|\n){re.escape(OPEN)}\n.*?{re.escape(CLOSE)}\n?", re.DOTALL)
+
+try:
+    fd = os.open(p, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+except OSError as e:
+    if e.errno in (errno.ELOOP, errno.EMLINK): sys.exit(1)
+    raise
+
+with os.fdopen(fd, "r+", encoding="utf-8", closefd=True) as f:
+    s = f.read()
+    rest = PAT.sub("", s)
+    # A user-declared table outside our block: theirs wins, we stay out.
+    if re.search(r"^[ \t]*\[sandbox_workspace_write\]", rest, re.MULTILINE): sys.exit(3)
+    found = PAT.findall(s)
+    if len(found) == 1 and found[0].strip("\n") == block.strip("\n"): sys.exit(2)
+    s2 = rest.rstrip("\n") + "\n" + block if rest.strip() else block.lstrip("\n")
+    f.seek(0); f.write(s2); f.truncate()
+PY
+}
+
+integrate_codex() {
+  integrate_global_md "codex" "$HOME/.codex/AGENTS.md"
+  local rc=0
+  codex_sandbox_toml || rc=$?
+  case $rc in
+    0) echo "  codex: ~/.codex/config.toml (sandbox writable_roots → $MSG_DIR)";;
+    2) echo "  codex: ~/.codex/config.toml (already integrated)";;
+    1) echo "  codex: refusing to follow symlink at ~/.codex/config.toml" >&2;;
+    3) echo "  codex: ~/.codex/config.toml already sets [sandbox_workspace_write] — leaving it alone." >&2
+       echo "         Add this to its writable_roots so read markers can be saved:" >&2
+       echo "           \"$MSG_DIR\"" >&2;;
+  esac
+}
+
+uninstall_codex() {
+  uninstall_global_md "$HOME/.codex/AGENTS.md"
+  [[ -f "$HOME/.codex/config.toml" ]] || return 0
+  python3 - "$HOME/.codex/config.toml" <<'PY'
+import errno, os, re, sys
+p = sys.argv[1]
+PAT = re.compile(r"(?:^|\n)# >>> agent-message >>>\n.*?# <<< agent-message <<<\n?", re.DOTALL)
+try:
+    fd = os.open(p, os.O_RDWR | os.O_NOFOLLOW)
+except OSError as e:
+    if e.errno in (errno.ELOOP, errno.EMLINK): sys.exit(0)
+    raise
+with os.fdopen(fd, "r+", encoding="utf-8", closefd=True) as f:
+    s = f.read(); s2 = PAT.sub("", s)
+    if s2 != s: f.seek(0); f.write(s2); f.truncate()
+PY
+}
 
 # Zed: per-repo only. Global rules live in an LMDB binary (Rules Library) — not safely scriptable.
 integrate_zed()              { integrate_repo_root_md "zed" ".rules"; }

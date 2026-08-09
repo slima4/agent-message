@@ -1300,6 +1300,66 @@ test_install_integrate_codex_writes_to_home_codex() {
   assert_file_missing "$dst"
 }
 
+# AGENTS.md teaches Codex the commands; config.toml is what lets the read marker
+# actually save under the default workspace-write sandbox. Without it the inbox
+# works but never marks anything read.
+test_install_integrate_codex_writes_sandbox_writable_root() {
+  local fake_home="$TMP/codex-sb-home"
+  _iargs "$fake_home"
+  local args=( "${_IARGS[@]}" --integrate=codex )
+  _install "$fake_home" "${args[@]}" || return 1
+
+  local cfg="$fake_home/.codex/config.toml"
+  assert_file_exists "$cfg" || return 1
+  local content; content=$(cat "$cfg")
+  assert_contains "$content" "[sandbox_workspace_write]" "table written" || return 1
+  assert_contains "$content" "$fake_home/.local/state/agent-message" "message dir listed" || return 1
+  # Must be valid TOML — a malformed config.toml breaks Codex entirely.
+  python3 -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" "$cfg" 2>/dev/null \
+    || { echo "  generated config.toml is not valid TOML"; return 1; }
+  _install "$fake_home" "${args[@]}" || return 1
+  assert_eq "1" "$(grep -c 'sandbox_workspace_write' "$cfg")" "idempotent" || return 1
+  _install "$fake_home" "${args[@]}" --uninstall || return 1
+  content=$(cat "$cfg")
+  assert_not_contains "$content" "sandbox_workspace_write" "stripped on uninstall"
+}
+
+test_install_integrate_codex_preserves_existing_config_toml() {
+  local fake_home="$TMP/codex-cfg-home"
+  mkdir -p "$fake_home/.codex"
+  printf 'model = "gpt-5.6-sol"\n\n[projects."/x"]\ntrust_level = "trusted"\n' > "$fake_home/.codex/config.toml"
+  _iargs "$fake_home"
+  local args=( "${_IARGS[@]}" --integrate=codex )
+  _install "$fake_home" "${args[@]}" || return 1
+
+  local cfg="$fake_home/.codex/config.toml"
+  python3 -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" "$cfg" 2>/dev/null \
+    || { echo "  config.toml no longer parses"; return 1; }
+  local content; content=$(cat "$cfg")
+  assert_contains "$content" 'model = "gpt-5.6-sol"' "user keys preserved" || return 1
+  assert_contains "$content" 'trust_level = "trusted"' "user tables preserved" || return 1
+  _install "$fake_home" "${args[@]}" --uninstall || return 1
+  content=$(cat "$cfg")
+  assert_contains "$content" 'model = "gpt-5.6-sol"' "user keys survive uninstall" || return 1
+  assert_not_contains "$content" "agent-message" "our block gone"
+}
+
+# Appending a second [sandbox_workspace_write] would be a TOML duplicate-table
+# error and break Codex outright. Refuse and tell the user what to add.
+test_install_integrate_codex_refuses_existing_sandbox_table() {
+  local fake_home="$TMP/codex-conflict-home"
+  mkdir -p "$fake_home/.codex"
+  printf '[sandbox_workspace_write]\nwritable_roots = ["/tmp/mine"]\n' > "$fake_home/.codex/config.toml"
+  _iargs "$fake_home"
+
+  local out
+  out=$(HOME="$fake_home" "$SCRIPT_DIR/install.sh" "${_IARGS[@]}" --integrate=codex 2>&1)
+  assert_contains "$out" "already sets [sandbox_workspace_write]" "explains the refusal" || return 1
+  local content; content=$(cat "$fake_home/.codex/config.toml")
+  assert_eq "1" "$(grep -c 'sandbox_workspace_write' "$fake_home/.codex/config.toml")" "no duplicate table" || return 1
+  assert_contains "$content" '"/tmp/mine"' "user roots untouched"
+}
+
 test_install_integrate_codex_preserves_existing_agents_md() {
   local fake_home="$TMP/codex-pre-home"
   mkdir -p "$fake_home/.codex"
@@ -1997,6 +2057,9 @@ TESTS=(
   test_install_integrate_copilot_cli_writes_to_home_copilot
   test_install_integrate_copilot_cli_preserves_existing_instructions
   test_install_integrate_codex_writes_to_home_codex
+  test_install_integrate_codex_writes_sandbox_writable_root
+  test_install_integrate_codex_preserves_existing_config_toml
+  test_install_integrate_codex_refuses_existing_sandbox_table
   test_install_integrate_codex_preserves_existing_agents_md
   test_install_integrate_zed_preserves_user_content
   test_install_integrate_zed_empty_file_removed
