@@ -16,9 +16,9 @@ No server · no MCP · no daemon · **0 LLM tokens** from your terminal
 
 ---
 
-https://github.com/user-attachments/assets/40588c99-6f3f-403e-ba9a-5d0f9d688675
+https://github.com/user-attachments/assets/33f4fb50-de16-4791-910a-8b54e4e25f08
 
-Two Claude Code sessions, two repos, no shared state. `my-server` sends its API spec with `/message-send my-web`; `my-web` runs `/message-inbox`, gets the endpoints, the models and a "no CORS configured" warning, and wires the frontend against it. One shell call each way. 3x speed.
+Claude Code in `my-server`, OpenAI Codex in `my-web` — two vendors, two repos, no shared state. Claude Code sends its API spec with `/message-send my-web`; Codex runs `~/.agent-message-cmd inbox` and gets the endpoints, the models, the error codes and a "no CORS configured" warning. One shell call each way. 3x speed.
 
 ```bash
 git clone https://github.com/slima4/agent-message && cd agent-message
