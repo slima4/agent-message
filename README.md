@@ -22,8 +22,10 @@ Two Claude Code sessions, two repos, no shared state. `my-server` sends its API 
 
 ```bash
 git clone https://github.com/slima4/agent-message && cd agent-message
-./install.sh && ./install.sh --integrate=auto
+./install.sh --integrate=auto
 ```
+
+Installs everything and wires each globally-configured agent tool found on this machine: a marker block in the tool's rules file, plus a sandbox writable-root in `~/.codex/config.toml` for Codex. All reversible with `./install.sh --uninstall`. Plain `./install.sh` skips the wiring and just names what it found.
 
 - **Use case:** Claude Code in `api/`, Codex CLI in `web/`, Cursor in `mobile/` — three vendors, one task. Claude finishes the schema change and runs `msg send web "schema: token nullable"`. The Codex agent sees it on its next inbox check and adapts its code. No shared session, no shared vendor, no human relaying between windows.
 - **Why it works everywhere:** the transport is a directory of JSONL files and the API is one shell command. No MCP server to register, no per-repo `.mcp.json`, no token. If an agent can run `bash`, it can join — including tools with no MCP support at all, plus cron jobs, CI, and you in a terminal.

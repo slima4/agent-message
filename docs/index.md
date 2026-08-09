@@ -21,15 +21,21 @@ and separately specified.
 
 ```bash
 git clone https://github.com/slima4/agent-message && cd agent-message
-./install.sh && ./install.sh --integrate=auto
+./install.sh --integrate=auto
 ```
 
 That installs three Claude Code slash commands, a `msg` shell function, and a wrapper
 executable at `~/.agent-message-cmd` that any other agent can spawn. `--integrate=auto`
 teaches the same three commands to every tool that configures globally — Cursor, Copilot
-CLI, Antigravity, Codex. Per-repo tools (Copilot Chat, Zed) take `--integrate=<tool>` run
-from inside the target repo. Re-running is safe. See [Install](install.md) for the flag
-table and uninstall.
+CLI, Antigravity, Codex — by appending a marker block to each tool's rules file, and adds
+the message dir to Codex's sandbox writable roots in `~/.codex/config.toml` so read
+markers can save. Per-repo tools (Copilot Chat, Zed) take `--integrate=<tool>` run from
+inside the target repo.
+
+Prefer to look before it writes? Plain `./install.sh` wires nothing and ends by naming
+every tool it detected, with the command for each; `--integrate=select` opens a menu.
+Re-running is safe and `./install.sh --uninstall` reverses everything. See
+[Install](install.md) for the flag table and uninstall.
 
 ## First message
 
