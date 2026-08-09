@@ -69,13 +69,27 @@ def thread_of(body: str, frm: str) -> tuple[str, str]:
     return f"{time.strftime('%Y-%m-%d', time.gmtime())}-{frm}-{slug}", body
 
 
-def _aw(p: Path, s: str) -> None:
+def _aw(p: Path, s: str) -> bool:
     # with_name (not with_suffix) so dotted aliases like "host.local" don't
     # collapse to ".seen-host.tmp". pid suffix: concurrent readers of the same
     # alias must not share a tmp name.
+    # Returns False instead of raising when the dir is not writable: a sandboxed
+    # agent (Codex workspace-write, read-only sync mount) must still be able to
+    # READ its messages. Losing the watermark re-shows them; crashing loses them.
     tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
-    tmp.write_text(s, encoding="utf-8")
-    os.replace(str(tmp), str(p))
+    try:
+        tmp.write_text(s, encoding="utf-8")
+        os.replace(str(tmp), str(p))
+    except OSError:
+        try: tmp.unlink()
+        except OSError: pass
+        return False
+    return True
+
+
+def _warn_unsaved(d: Path) -> None:
+    print(f"note: read marker not saved ({d} not writable) — these show again next time",
+          file=sys.stderr)
 
 
 def _logs(d: Path) -> list[Path]:
@@ -217,7 +231,7 @@ def inbox(args: list[str]) -> None:
     if not out:
         print(f"{'no new messages' if mode == 'default' else 'no messages'} (as {who})")
         if mode == "default": _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count, "size": cur_size}))
-        return
+        return  # nothing shown, so an unwritable cache costs nothing worth warning about
     if mode == "raw":
         for _, m in out:
             print(json.dumps(m, ensure_ascii=False))
@@ -242,8 +256,9 @@ def inbox(args: list[str]) -> None:
         shown = {f"{m['from']}:{i}" for i, m in out}
         new_since = min(now, max(m["ts"] for _, m in out))
         new_ids = sorted(k for k, t in allm if t >= new_since and (k in shown or k in since_ids))
-        _aw(sf, json.dumps({"ts": new_since, "ids": new_ids}))
-        _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count, "size": cur_size}))
+        ok = _aw(sf, json.dumps({"ts": new_since, "ids": new_ids}))
+        ok = _aw(mf, json.dumps({"max_mtime": cur_max, "files": cur_count, "size": cur_size})) and ok
+        if not ok: _warn_unsaved(d)
     senders = sorted({m["from"] for _, m in out})
     # "new" only in default: all re-reads already-seen messages, none of them new.
     # A bounded re-read says what it withheld, same rule as body elision.

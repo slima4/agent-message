@@ -110,6 +110,35 @@ test_wrapper_watermark() {
   assert_contains "$out" "no new messages" "watermark suppresses re-show"
 }
 
+# A sandboxed agent (Codex workspace-write) or a read-only sync mount can read the
+# logs but not write the watermark. Reading must still work: show the messages,
+# warn once, exit 0. Crashing after printing loses the messages the caller came for.
+test_wrapper_readonly_dir_still_reads() {
+  ( cd "$TMP/foo" && echo "sandboxed hello" | "$WRAPPER" send bar ) >/dev/null
+  chmod a-w "$AGENT_MESSAGE_DIR"
+  local out rc=0
+  out=$( cd "$TMP/bar" && "$WRAPPER" inbox 2>&1 ) || rc=$?
+  chmod u+w "$AGENT_MESSAGE_DIR"
+  assert_eq "0" "$rc" "read-only dir exits 0" || return 1
+  assert_contains "$out" "sandboxed hello" "message still shown" || return 1
+  assert_contains "$out" "read marker not saved" "warns once" || return 1
+  assert_not_contains "$out" "Traceback" "no traceback" || return 1
+  assert_file_missing "$AGENT_MESSAGE_DIR/.seen-bar"
+}
+
+test_shell_readonly_dir_still_reads() {
+  ( cd "$TMP/foo" && echo "shell sandboxed" | "$WRAPPER" send bar ) >/dev/null
+  chmod a-w "$AGENT_MESSAGE_DIR"
+  local out rc=0
+  # shellcheck source=shell/msg.sh
+  out=$( source "$SHELL_HELPER"; cd "$TMP/bar" && msg 2>&1 ) || rc=$?
+  chmod u+w "$AGENT_MESSAGE_DIR"
+  assert_eq "0" "$rc" "read-only dir exits 0" || return 1
+  assert_contains "$out" "shell sandboxed" "message still shown" || return 1
+  assert_contains "$out" "read marker not saved" "warns once" || return 1
+  assert_not_contains "$out" "Traceback" "no traceback"
+}
+
 test_wrapper_same_second_burst() {
   ( cd "$TMP/foo" && echo "first" | "$WRAPPER" send bar ) >/dev/null
   ( cd "$TMP/foo" && echo "second" | "$WRAPPER" send bar ) >/dev/null
@@ -1888,6 +1917,8 @@ test_installer_help_includes_trailing_options() {
 TESTS=(
   test_wrapper_round_trip
   test_wrapper_watermark
+  test_wrapper_readonly_dir_still_reads
+  test_shell_readonly_dir_still_reads
   test_wrapper_same_second_burst
   test_wrapper_dedup_synced_log
   test_wrapper_alias_traversal_blocked

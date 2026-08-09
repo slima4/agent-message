@@ -149,7 +149,7 @@ PY
       local mode=new
       [ "$cmd" = all ] && mode=all
       MSG_ME="$me" MSG_DIR="$dir" MSG_MODE="$mode" MSG_LAST="$last" python3 - <<'PY'
-import json, os, re, time, hashlib, unicodedata
+import json, os, re, sys, time, hashlib, unicodedata
 from pathlib import Path
 me=os.environ["MSG_ME"]; d=Path(os.environ["MSG_DIR"]); mode=os.environ["MSG_MODE"]
 last=int(os.environ.get("MSG_LAST","0"))
@@ -162,7 +162,15 @@ log_paths=[p for p in sorted(d.glob("log-*.jsonl")) if not p.is_symlink()]
 def aw(p, s):
     # with_name (not with_suffix): dotted aliases like "host.local" must not collapse
     # to ".seen-host.tmp". pid suffix: concurrent readers must not share a tmp.
-    t=p.with_name(f"{p.name}.{os.getpid()}.tmp"); t.write_text(s, encoding="utf-8"); os.replace(str(t), str(p))
+    # False (not raise) on an unwritable dir — reading messages must survive a
+    # sandboxed agent or a read-only sync mount. Mirrors _aw in the wrapper.
+    t=p.with_name(f"{p.name}.{os.getpid()}.tmp")
+    try: t.write_text(s, encoding="utf-8"); os.replace(str(t), str(p))
+    except OSError:
+        try: t.unlink()
+        except OSError: pass
+        return False
+    return True
 # mtime short-circuit — skip parse entirely if nothing observable changed.
 # Size is the third signal: same-tick appends and sync deliveries preserving an
 # older sender mtime are invisible to (mtime, count) alone.
@@ -254,8 +262,9 @@ if mode=="new":
     shown={m["_k"] for m in msgs}
     new_since=min(now, max(m["ts"] for m in msgs))
     new_ids=sorted(k for k,t in allm if t>=new_since and (k in shown or k in since_ids))
-    aw(seen_file, json.dumps({"ts":new_since,"ids":new_ids}))
-    aw(mtime_file, json.dumps({"max_mtime":cur_max,"files":cur_count,"size":cur_size}))
+    ok=aw(seen_file, json.dumps({"ts":new_since,"ids":new_ids}))
+    ok=aw(mtime_file, json.dumps({"max_mtime":cur_max,"files":cur_count,"size":cur_size})) and ok
+    if not ok: print(f"note: read marker not saved ({d} not writable) — these show again next time", file=sys.stderr)
 PY
       ;;
     tail)
