@@ -501,7 +501,7 @@ print(f"compacted {lf.name}: {len(orig)} → {len(keep)} line(s), {dropped} dupl
 PY
       ;;
     --version|-V|version)
-      echo "msg 1.2.1 (SAMP v1)"
+      echo "msg 1.3.0 (SAMP v1)"
       ;;
     help|-h|--help)
       cat <<EOF
